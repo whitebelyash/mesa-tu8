@@ -151,6 +151,7 @@ tu_spirv_to_nir(struct tu_device *dev,
                 const struct tu_shader_key *key,
                 mesa_shader_stage stage);
 
+template <chip CHIP>
 void
 tu6_emit_xs(struct tu_crb &crb,
             struct tu_device *device,

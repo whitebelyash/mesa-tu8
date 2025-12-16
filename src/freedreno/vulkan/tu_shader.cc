@@ -1017,7 +1017,7 @@ tu_lower_io(nir_shader *shader, struct tu_device *dev,
       /* Disable pushing constants for this stage if none were loaded in the
        * shader.  If all stages don't load their declared push constants, as
        * is often the case under zink, then we could additionally skip
-       * emitting REG_A7XX_SP_SHARED_CONSTANT_GFX entirely.
+       * emitting SP_SHARED_CONSTANT_GFX entirely.
        */
       if (!shader_uses_push_consts(shader))
          const_state->push_consts = (struct tu_push_constant_range) {};
@@ -1502,6 +1502,7 @@ tu_xs_get_additional_cs_size_dwords(const struct ir3_shader_variant *xs)
    return size;
 }
 
+template <chip CHIP>
 void
 tu6_emit_xs(struct tu_crb &crb,
             struct tu_device *device,
@@ -1541,7 +1542,7 @@ tu6_emit_xs(struct tu_crb &crb,
          A6XX_SP_VS_PVT_MEM_SIZE(.totalpvtmemsize = pvtmem->per_sp_size,
                                  .perwavememlayout = xs->pvtmem_per_wave));
       crb.add(A6XX_SP_VS_PVT_MEM_STACK_OFFSET(.offset = pvtmem->per_sp_size));
-      if (device->physical_device->info->chip >= A7XX)
+      if (CHIP >= A7XX)
          crb.add(SP_VS_VGS_CNTL(A7XX, 0));
       break;
 
@@ -1560,7 +1561,7 @@ tu6_emit_xs(struct tu_crb &crb,
          A6XX_SP_HS_PVT_MEM_SIZE(.totalpvtmemsize = pvtmem->per_sp_size,
                                  .perwavememlayout = xs->pvtmem_per_wave));
       crb.add(A6XX_SP_HS_PVT_MEM_STACK_OFFSET(.offset = pvtmem->per_sp_size));
-      if (device->physical_device->info->chip >= A7XX)
+      if (CHIP >= A7XX)
          crb.add(SP_HS_VGS_CNTL(A7XX, 0));
 
       break;
@@ -1580,7 +1581,7 @@ tu6_emit_xs(struct tu_crb &crb,
          A6XX_SP_DS_PVT_MEM_SIZE(.totalpvtmemsize = pvtmem->per_sp_size,
                                  .perwavememlayout = xs->pvtmem_per_wave));
       crb.add(A6XX_SP_DS_PVT_MEM_STACK_OFFSET(.offset = pvtmem->per_sp_size));
-      if (device->physical_device->info->chip >= A7XX)
+      if (CHIP >= A7XX)
          crb.add(SP_DS_VGS_CNTL(A7XX, 0));
       break;
 
@@ -1599,7 +1600,7 @@ tu6_emit_xs(struct tu_crb &crb,
          A6XX_SP_GS_PVT_MEM_SIZE(.totalpvtmemsize = pvtmem->per_sp_size,
                                  .perwavememlayout = xs->pvtmem_per_wave));
       crb.add(A6XX_SP_GS_PVT_MEM_STACK_OFFSET(.offset = pvtmem->per_sp_size));
-      if (device->physical_device->info->chip >= A7XX)
+      if (CHIP >= A7XX)
          crb.add(SP_GS_VGS_CNTL(A7XX, 0));
       break;
 
@@ -1615,6 +1616,12 @@ tu6_emit_xs(struct tu_crb &crb,
             .inoutregoverlap = true, .pixlodenable = xs->need_pixlod,
             .earlypreamble = xs->early_preamble,
             .mergedregs = xs->mergedregs, ));
+      if (CHIP >= A8XX) {
+         crb.add(RB_PS_CNTL(CHIP,
+            .pixlodenable = xs->need_pixlod,
+            .lodpixmask = xs->need_full_quad,
+         ));
+      }
       crb.add(A6XX_SP_PS_INSTR_SIZE(xs->instrlen));
       crb.add(A6XX_SP_PS_PROGRAM_COUNTER_OFFSET(0));
       crb.add(A6XX_SP_PS_BASE(.qword = binary_iova));
@@ -1625,7 +1632,7 @@ tu6_emit_xs(struct tu_crb &crb,
          A6XX_SP_PS_PVT_MEM_SIZE(.totalpvtmemsize = pvtmem->per_sp_size,
                                  .perwavememlayout = xs->pvtmem_per_wave));
       crb.add(A6XX_SP_PS_PVT_MEM_STACK_OFFSET(.offset = pvtmem->per_sp_size));
-      if (device->physical_device->info->chip >= A7XX)
+      if (CHIP >= A7XX)
          crb.add(SP_PS_VGS_CNTL(A7XX, 0));
 
       break;
@@ -1650,7 +1657,7 @@ tu6_emit_xs(struct tu_crb &crb,
          A6XX_SP_CS_PVT_MEM_SIZE(.totalpvtmemsize = pvtmem->per_sp_size,
                                  .perwavememlayout = xs->pvtmem_per_wave));
       crb.add(A6XX_SP_CS_PVT_MEM_STACK_OFFSET(.offset = pvtmem->per_sp_size));
-      if (device->physical_device->info->chip >= A7XX)
+      if (CHIP >= A7XX)
          crb.add(SP_CS_VGS_CNTL(A7XX, 0));
       break;
 
@@ -1658,6 +1665,7 @@ tu6_emit_xs(struct tu_crb &crb,
       UNREACHABLE("bad shader stage");
    }
 }
+TU_GENX(tu6_emit_xs);
 
 void
 tu6_emit_xs_constants(
@@ -1782,7 +1790,7 @@ tu6_emit_cs_config(struct tu_cs *cs,
       crb.add(SP_UPDATE_CNTL(CHIP, .cs_state = true, .cs_uav = true,
                              .cs_shared_const = shared_consts_enable));
       tu6_emit_xs_config<CHIP>(crb, { .cs = v });
-      tu6_emit_xs(crb, cs->device, MESA_SHADER_COMPUTE, v, pvtmem, binary_iova);
+      tu6_emit_xs<CHIP>(crb, cs->device, MESA_SHADER_COMPUTE, v, pvtmem, binary_iova);
    }
    tu6_emit_xs_constants(cs, MESA_SHADER_COMPUTE, v, binary_iova);
 
@@ -1863,6 +1871,7 @@ tu6_emit_cs_config(struct tu_cs *cs,
 
 #define TU6_EMIT_VFD_DEST_MAX_DWORDS (MAX_VERTEX_ATTRIBS + 2)
 
+template <chip CHIP>
 static void
 tu6_emit_vfd_dest(struct tu_cs *cs,
                   const struct ir3_shader_variant *vs)
@@ -1887,6 +1896,25 @@ tu6_emit_vfd_dest(struct tu_cs *cs,
                    A6XX_VFD_CNTL_0(
                      .fetch_cnt = attr_count, /* decode_cnt for binning pass ? */
                      .decode_cnt = attr_count));
+
+   if (CHIP >= A8XX) {
+      const uint32_t vertexid_regid =
+            ir3_find_sysval_regid(vs, SYSTEM_VALUE_VERTEX_ID);
+      const uint32_t instanceid_regid =
+            ir3_find_sysval_regid(vs, SYSTEM_VALUE_INSTANCE_ID);
+      const uint32_t viewid_regid =
+            ir3_find_sysval_regid(vs, SYSTEM_VALUE_VIEW_INDEX);
+
+      unsigned sideband_count =
+         (vertexid_regid != INVALID_REG) +
+         (instanceid_regid != INVALID_REG) +
+         (viewid_regid != INVALID_REG);
+
+      tu_cs_emit_regs(cs, PC_VS_INPUT_CNTL(CHIP,
+         .instr_cnt = attr_count,
+         .sideband_cnt = sideband_count,
+      ));
+   }
 
    if (attr_count)
       tu_cs_emit_pkt4(cs, REG_A6XX_VFD_DEST_CNTL_INSTR(0), attr_count);
@@ -1989,6 +2017,11 @@ tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs)
                          .zwcoordregid = zwcoord_regid),
       SP_REG_PROG_ID_3(CHIP, .linelengthregid = 0xfc,
                          .foveationqualityregid = shading_rate_regid), );
+
+   if (CHIP >= A8XX) {
+      tu_cs_emit_regs(cs, RB_LB_PARAM_LIMIT(CHIP,
+         cs->device->physical_device->info->props.prim_alloc_threshold));
+   }
 
    if (CHIP >= A7XX) {
       uint32_t sysval_regs = 0;
@@ -2245,7 +2278,7 @@ tu6_emit_vs(struct tu_cs *cs,
       tu_cs_emit_regs(cs, VPC_STEREO_RENDERING_VIEWMASK(CHIP, view_mask));
    }
 
-   tu6_emit_vfd_dest(cs, vs);
+   tu6_emit_vfd_dest<CHIP>(cs, vs);
 
    const uint32_t vertexid_regid =
          ir3_find_sysval_regid(vs, SYSTEM_VALUE_VERTEX_ID);
@@ -2404,7 +2437,7 @@ tu6_emit_variant(struct tu_cs *cs,
    }
 
    with_crb(cs) {
-      tu6_emit_xs(crb, cs->device, stage, xs, pvtmem_config, binary_iova);
+      tu6_emit_xs<CHIP>(crb, cs->device, stage, xs, pvtmem_config, binary_iova);
    }
 
    switch (stage) {

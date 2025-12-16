@@ -541,6 +541,18 @@ is_pipeline_query_with_compute_stage(uint32_t pipeline_statistics)
           VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT;
 }
 
+template <chip CHIP>
+static inline void
+emit_counter_barrier(struct tu_cs *cs)
+{
+   tu_cs_emit_wfi(cs);
+
+   if (CHIP >= A8XX) {
+      tu_cs_emit_pkt7(cs, CP_BARRIER, 1);
+      tu_cs_emit(cs, 1);
+   }
+}
+
 /* Wait on the the availability status of a query up until a timeout. */
 static VkResult
 wait_for_available(struct tu_device *device, struct tu_query_pool *pool,
@@ -1165,7 +1177,7 @@ emit_begin_stat_query(struct tu_cmd_buffer *cmdbuf,
       tu_emit_event_write<CHIP>(cmdbuf, cs, FD_START_COMPUTE_CTRS);
    }
 
-   tu_cs_emit_wfi(cs);
+   emit_counter_barrier<CHIP>(cs);
 
    tu_cs_emit_pkt7(cs, CP_REG_TO_MEM, 3);
    tu_cs_emit(cs, CP_REG_TO_MEM_0_REG(COUNTER_REG(IAVERTICES)) |
@@ -1174,12 +1186,13 @@ emit_begin_stat_query(struct tu_cmd_buffer *cmdbuf,
    tu_cs_emit_qw(cs, begin_iova);
 }
 
+template <chip CHIP>
 static void
 emit_perfcntrs_pass_start(bool has_pred_bit, struct tu_cs *cs, uint32_t pass)
 {
    tu_cs_emit_pkt7(cs, CP_REG_TEST, 1);
    tu_cs_emit(cs, A6XX_CP_REG_TEST_0_REG(
-                        REG_A6XX_CP_SCRATCH(PERF_CNTRS_REG)) |
+                        tu_scratch_reg<CHIP>(PERF_CNTRS_REG).reg) |
                   A6XX_CP_REG_TEST_0_BIT(pass) |
                   (has_pred_bit ?
                      A6XX_CP_REG_TEST_0_PRED_BIT(TU_PREDICATE_PERFCNTRS) : 0) |
@@ -1222,7 +1235,7 @@ emit_begin_perf_query_raw(struct tu_cmd_buffer *cmdbuf,
     *     stream below CP_COND_REG_EXEC.
     */
 
-   tu_cs_emit_wfi(cs);
+   emit_counter_barrier<CHIP>(cs);
 
    /* Keep preemption disabled for the duration of this query. This way
     * changes in perfcounter values should only apply to work done during
@@ -1242,7 +1255,7 @@ emit_begin_perf_query_raw(struct tu_cmd_buffer *cmdbuf,
 
          if (data->pass != 0)
             tu_cond_exec_end(cs);
-         emit_perfcntrs_pass_start(has_pred_bit, cs, data->pass);
+         emit_perfcntrs_pass_start<CHIP>(has_pred_bit, cs, data->pass);
       }
 
       const struct fd_perfcntr_counter *counter =
@@ -1256,7 +1269,7 @@ emit_begin_perf_query_raw(struct tu_cmd_buffer *cmdbuf,
    tu_cond_exec_end(cs);
 
    last_pass = ~0;
-   tu_cs_emit_wfi(cs);
+   emit_counter_barrier<CHIP>(cs);
 
    for (uint32_t i = 0; i < perf_query->counter_index_count; i++) {
       struct tu_perf_query_raw_data *data = &perf_query->data[i];
@@ -1266,7 +1279,7 @@ emit_begin_perf_query_raw(struct tu_cmd_buffer *cmdbuf,
 
          if (data->pass != 0)
             tu_cond_exec_end(cs);
-         emit_perfcntrs_pass_start(has_pred_bit, cs, data->pass);
+         emit_perfcntrs_pass_start<CHIP>(has_pred_bit, cs, data->pass);
       }
 
       const struct fd_perfcntr_counter *counter =
@@ -1291,7 +1304,7 @@ emit_begin_perf_query_derived(struct tu_cmd_buffer *cmdbuf,
    struct tu_cs *cs = cmdbuf->state.pass ? &cmdbuf->draw_cs : &cmdbuf->cs;
    struct tu_perf_query_derived *perf_query = &pool->perf_query.derived;
 
-   tu_cs_emit_wfi(cs);
+   emit_counter_barrier<CHIP>(cs);
 
    /* Keep preemption disabled for the duration of this query. This way
     * changes in perfcounter values should only apply to work done during
@@ -1311,7 +1324,7 @@ emit_begin_perf_query_derived(struct tu_cmd_buffer *cmdbuf,
       tu_cs_emit(cs, countable);
    }
 
-   tu_cs_emit_wfi(cs);
+   emit_counter_barrier<CHIP>(cs);
 
    /* Collect the enabled perfcntrs. Emit CP_ALWAYS_COUNT collection last, if necessary. */
    for (uint32_t i = 0; i < perf_query->collection->num_enabled_perfcntrs; ++i) {
@@ -1383,7 +1396,7 @@ emit_begin_prim_generated_query(struct tu_cmd_buffer *cmdbuf,
 
    tu_emit_event_write<CHIP>(cmdbuf, cs, FD_START_PRIMITIVE_CTRS);
 
-   tu_cs_emit_wfi(cs);
+   emit_counter_barrier<CHIP>(cs);
 
    tu_cs_emit_pkt7(cs, CP_REG_TO_MEM, 3);
    tu_cs_emit(cs, CP_REG_TO_MEM_0_REG(COUNTER_REG(CINVOCATIONS)) |
@@ -1539,7 +1552,7 @@ emit_end_occlusion_query(struct tu_cmd_buffer *cmdbuf,
                                        .write_accum_sample_count_diff = true).value);
       tu_cs_emit_qw(cs, begin_iova);
 
-      tu_cs_emit_wfi(cs);
+      emit_counter_barrier<CHIP>(cs);
 
       if (cmdbuf->device->physical_device->info->props.has_generic_clear) {
          /* If the next renderpass uses the same depth attachment, clears it
@@ -1651,7 +1664,7 @@ emit_end_stat_query(struct tu_cmd_buffer *cmdbuf,
       tu_emit_event_write<CHIP>(cmdbuf, cs, FD_STOP_COMPUTE_CTRS);
    }
 
-   tu_cs_emit_wfi(cs);
+   emit_counter_barrier<CHIP>(cs);
 
    tu_cs_emit_pkt7(cs, CP_REG_TO_MEM, 3);
    tu_cs_emit(cs, CP_REG_TO_MEM_0_REG(COUNTER_REG(IAVERTICES)) |
@@ -1705,7 +1718,7 @@ emit_end_perf_query_raw(struct tu_cmd_buffer *cmdbuf,
    /* Wait for the profiled work to finish so that collected counter values
     * are as accurate as possible.
     */
-   tu_cs_emit_wfi(cs);
+   emit_counter_barrier<CHIP>(cs);
 
    for (uint32_t i = 0; i < perf_query->counter_index_count; i++) {
       struct tu_perf_query_raw_data *data = &perf_query->data[i];
@@ -1715,7 +1728,7 @@ emit_end_perf_query_raw(struct tu_cmd_buffer *cmdbuf,
 
          if (data->pass != 0)
             tu_cond_exec_end(cs);
-         emit_perfcntrs_pass_start(has_pred_bit, cs, data->pass);
+         emit_perfcntrs_pass_start<CHIP>(has_pred_bit, cs, data->pass);
       }
 
       const struct fd_perfcntr_counter *counter =
@@ -1731,7 +1744,7 @@ emit_end_perf_query_raw(struct tu_cmd_buffer *cmdbuf,
    tu_cond_exec_end(cs);
 
    last_pass = ~0;
-   tu_cs_emit_wfi(cs);
+   emit_counter_barrier<CHIP>(cs);
 
    for (uint32_t i = 0; i < perf_query->counter_index_count; i++) {
       struct tu_perf_query_raw_data *data = &perf_query->data[i];
@@ -1742,7 +1755,7 @@ emit_end_perf_query_raw(struct tu_cmd_buffer *cmdbuf,
 
          if (data->pass != 0)
             tu_cond_exec_end(cs);
-         emit_perfcntrs_pass_start(has_pred_bit, cs, data->pass);
+         emit_perfcntrs_pass_start<CHIP>(has_pred_bit, cs, data->pass);
       }
 
       result_iova = query_result_iova(pool, query, struct perfcntr_query_slot,
@@ -1796,7 +1809,7 @@ emit_end_perf_query_derived(struct tu_cmd_buffer *cmdbuf,
    /* Wait for the profiled work to finish so that collected counter values
     * are as accurate as possible.
     */
-   tu_cs_emit_wfi(cs);
+   emit_counter_barrier<CHIP>(cs);
 
    /* Collect the enabled perfcntrs. Emit CP_ALWAYS_COUNT collection first, if necessary. */
    if (perf_query->collection->cp_always_count_enabled) {
@@ -1822,7 +1835,7 @@ emit_end_perf_query_derived(struct tu_cmd_buffer *cmdbuf,
       tu_cs_emit_qw(cs, end_iova);
    }
 
-   tu_cs_emit_wfi(cs);
+   emit_counter_barrier<CHIP>(cs);
 
    for (uint32_t i = 0; i < perf_query->collection->num_enabled_perfcntrs; ++i) {
       uint64_t result_iova = perf_query_derived_perfcntr_iova(pool, query, result, i);
@@ -1884,7 +1897,7 @@ emit_end_xfb_query(struct tu_cmd_buffer *cmdbuf,
    tu_cs_emit_regs(cs, VPC_SO_QUERY_BASE(CHIP, .qword = end_iova));
    tu_emit_event_write<CHIP>(cmdbuf, cs, FD_WRITE_PRIMITIVE_COUNTS);
 
-   tu_cs_emit_wfi(cs);
+   emit_counter_barrier<CHIP>(cs);
    tu_emit_event_write<CHIP>(cmdbuf, cs, FD_CACHE_CLEAN);
 
    /* Set the count of written primitives */
@@ -1936,7 +1949,7 @@ emit_end_prim_generated_query(struct tu_cmd_buffer *cmdbuf,
                              CP_COND_REG_EXEC_0_BINNING);
    }
 
-   tu_cs_emit_wfi(cs);
+   emit_counter_barrier<CHIP>(cs);
 
    tu_cs_emit_pkt7(cs, CP_REG_TO_MEM, 3);
    tu_cs_emit(cs, CP_REG_TO_MEM_0_REG(COUNTER_REG(CINVOCATIONS)) |
@@ -2085,7 +2098,7 @@ tu_CmdWriteTimestamp2(VkCommandBuffer commandBuffer,
        * there's a better solution that allows all 48 bits of precision
        * because CP_EVENT_WRITE doesn't support 64-bit timestamps.
        */
-      tu_cs_emit_wfi(cs);
+      emit_counter_barrier<CHIP>(cs);
    }
 
    tu_cs_emit_pkt7(cs, CP_REG_TO_MEM, 3);

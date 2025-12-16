@@ -910,12 +910,17 @@ tu_get_physical_device_properties_1_2(struct tu_physical_device *pdevice,
    p->roundingModeIndependence =
       VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL;
 
-   p->shaderDenormFlushToZeroFloat16         = true;
-   p->shaderDenormPreserveFloat16            = false;
+   if (pdevice->info->chip >= A8XX) {
+      p->shaderDenormFlushToZeroFloat16      = false;
+      p->shaderDenormPreserveFloat16         = true;
+   } else {
+      p->shaderDenormFlushToZeroFloat16      = true;
+      p->shaderDenormPreserveFloat16         = false;
+   }
+
    p->shaderRoundingModeRTEFloat16           = true;
    p->shaderRoundingModeRTZFloat16           = false;
    p->shaderSignedZeroInfNanPreserveFloat16  = true;
-
    p->shaderDenormFlushToZeroFloat32         = true;
 
    /* FP32 denorm preserve has to be emulated via soft-float. Normal
@@ -1578,7 +1583,8 @@ tu_physical_device_init(struct tu_physical_device *device,
 
    switch (fd_dev_gen(&device->dev_id)) {
    case 6:
-   case 7: {
+   case 7:
+   case 8: {
       device->dev_info = info;
       device->info = &device->dev_info;
 
@@ -2685,6 +2691,12 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
    case 7:
       vk_device_dispatch_table_from_entrypoints(
          &dispatch_table, &tu_device_entrypoints_a7xx, false);
+   case 8:
+      /* gen8 TODO: */
+      tu_env.debug |= TU_DEBUG_NOLRZ;     /* WRITE iova faults from UCHE */
+      tu_env.debug |= TU_DEBUG_FLUSHALL;  /* dEQP-VK.draw.\*from_compute\* */
+      vk_device_dispatch_table_from_entrypoints(
+         &dispatch_table, &tu_device_entrypoints_a8xx, false);
    }
 
    vk_device_dispatch_table_from_entrypoints(
@@ -2953,8 +2965,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
             goto fail_prepare_perfcntrs_pass_cs;
          }
 
-         /* TODO: a8xx */
-         tu_cs_emit_regs(&sub_cs, CP_SCRATCH_REG(A6XX, PERF_CNTRS_REG, 1 << i));
+         tu_cs_emit_regs(&sub_cs, TU_CALLX(device, tu_scratch_reg)(PERF_CNTRS_REG, 1 << i));
          tu_cs_emit_pkt7(&sub_cs, CP_WAIT_FOR_ME, 0);
 
          device->perfcntrs_pass_cs_entries[i] =

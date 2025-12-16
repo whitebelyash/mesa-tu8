@@ -1167,6 +1167,7 @@ tu6_emit_vs_params(struct tu_cs *cs,
                   ARRAY_SIZE(vs_params), vs_params);
 }
 
+template <chip CHIP>
 static void
 tu_get_tess_iova(struct tu_device *dev,
                  uint64_t *tess_factor_iova,
@@ -1176,14 +1177,14 @@ tu_get_tess_iova(struct tu_device *dev,
    if (!dev->tess_bo) {
       mtx_lock(&dev->mutex);
       if (!dev->tess_bo) {
-         tu_bo_init_new(dev, NULL, &dev->tess_bo, TU_TESS_BO_SIZE,
+         tu_bo_init_new(dev, NULL, &dev->tess_bo, TU_TESS<CHIP>::BO_SIZE,
                         TU_BO_ALLOC_INTERNAL_RESOURCE, "tess");
       }
       mtx_unlock(&dev->mutex);
    }
 
    *tess_factor_iova = dev->tess_bo->iova;
-   *tess_param_iova = dev->tess_bo->iova + TU_TESS_FACTOR_SIZE;
+   *tess_param_iova = dev->tess_bo->iova + TU_TESS<CHIP>::FACTOR_SIZE;
 }
 
 static const enum mesa_vk_dynamic_graphics_state tu_patch_control_points_state[] = {
@@ -1235,7 +1236,7 @@ tu6_emit_patch_control_points(struct tu_cs *cs,
                       patch_control_points);
 
    uint64_t tess_factor_iova, tess_param_iova;
-   tu_get_tess_iova(dev, &tess_factor_iova, &tess_param_iova);
+   tu_get_tess_iova<CHIP>(dev, &tess_factor_iova, &tess_param_iova);
 
    uint32_t hs_params[HS_PARAMS_SIZE] = {
       vs->variant->output_size * patch_control_points * 4,  /* hs primitive stride */
@@ -1289,6 +1290,7 @@ tu6_emit_patch_control_points(struct tu_cs *cs,
    tu_cs_emit(cs, wave_input_size);
 }
 
+template <chip CHIP>
 static void
 tu6_emit_geom_tess_consts(struct tu_cs *cs,
                           const struct ir3_shader_variant *vs,
@@ -1305,7 +1307,7 @@ tu6_emit_geom_tess_consts(struct tu_cs *cs,
 
    if (hs) {
       uint64_t tess_factor_iova, tess_param_iova;
-      tu_get_tess_iova(dev, &tess_factor_iova, &tess_param_iova);
+      tu_get_tess_iova<CHIP>(dev, &tess_factor_iova, &tess_param_iova);
 
       uint32_t ds_params[8] = {
          gs ? ds->output_size * gs->gs.vertices_in * 4 : 0,  /* ds primitive stride */
@@ -1407,7 +1409,7 @@ tu6_emit_program_config(struct tu_cs *cs,
    }
 
    if (gs || hs) {
-      tu6_emit_geom_tess_consts(cs, vs, hs, ds, gs);
+      tu6_emit_geom_tess_consts<CHIP>(cs, vs, hs, ds, gs);
    }
 }
 
@@ -2531,7 +2533,11 @@ template <chip CHIP>
 static unsigned
 tu6_viewport_nregs(const struct vk_viewport_state *vp)
 {
-   return 10 * vp->viewport_count + 3;
+   if (CHIP >= A8XX) {
+      return 12 * vp->viewport_count + 1;
+   } else {
+      return 10 * vp->viewport_count + 3;
+   }
 }
 
 template <chip CHIP>
@@ -2636,7 +2642,10 @@ tu6_emit_viewport(struct tu_cs *cs,
       crb.add(GRAS_CL_VIEWPORT_ZCLAMP_MIN(CHIP, i, zmin));
       crb.add(GRAS_CL_VIEWPORT_ZCLAMP_MAX(CHIP, i, zmax));
 
-      if (i == 0) {
+      if (CHIP >= A8XX) {
+         crb.add(RB_VIEWPORT_ZCLAMP_MIN_REG(CHIP, i, zmin));
+         crb.add(RB_VIEWPORT_ZCLAMP_MAX_REG(CHIP, i, zmax));
+      } else if (i == 0) {
          /* TODO: what to do about this and multi viewport ? */
          crb.add(RB_VIEWPORT_ZCLAMP_MIN(CHIP, zmin));
          crb.add(RB_VIEWPORT_ZCLAMP_MAX(CHIP, zmax));
@@ -3232,7 +3241,7 @@ tu6_blend_size(struct tu_device *dev,
 {
    unsigned num_rts = alpha_to_coverage_enable ?
       MAX2(cb->attachment_count, 1) : cb->attachment_count;
-   return 8 + 3 * num_rts;
+   return 8 + 5 * num_rts;
 }
 
 template <chip CHIP>
@@ -3281,7 +3290,8 @@ tu6_emit_blend(struct tu_cs *cs,
                                           .dual_color_in_enable =
                                              dual_src_blend,
                                           .alpha_to_coverage =
-                                             alpha_to_coverage_enable));
+                                             alpha_to_coverage_enable,
+                                          .alpha_to_one = alpha_to_one_enable));
    /* TODO: set A6XX_RB_BLEND_CNTL_INDEPENDENT_BLEND only when enabled?
     *
     * We could also set blend_reads_dest more conservatively, but it didn't show
@@ -3340,10 +3350,19 @@ tu6_emit_blend(struct tu_cs *cs,
                                                    .alpha_src_factor = src_alpha_factor,
                                                    .alpha_blend_opcode = alpha_op,
                                                    .alpha_dest_factor = dst_alpha_factor));
+         if (CHIP >= A8XX) {
+            tu_cs_emit_regs(cs, SP_MRT_BLEND_CNTL_REG(CHIP, remapped_idx,
+               .color_blend_en = blend_enable,
+               .alpha_blend_en = blend_enable,
+               .component_write_mask = att->write_mask));
+         }
       } else {
-            tu_cs_emit_regs(cs,
-                            A6XX_RB_MRT_CONTROL(remapped_idx,),
-                            A6XX_RB_MRT_BLEND_CONTROL(remapped_idx,));
+         tu_cs_emit_regs(cs,
+                         A6XX_RB_MRT_CONTROL(remapped_idx,),
+                         A6XX_RB_MRT_BLEND_CONTROL(remapped_idx,));
+         if (CHIP >= A8XX) {
+            tu_cs_emit_regs(cs, SP_MRT_BLEND_CNTL_REG(CHIP, remapped_idx,));
+         }
       }
    }
    tu_cs_emit_regs(cs, A6XX_SP_PS_MRT_CNTL(.mrt = num_remapped_rts));
@@ -3400,7 +3419,7 @@ tu6_rast_size(struct tu_device *dev,
    } else if (CHIP == A6XX) {
       return 15 + (dev->physical_device->info->props.has_legacy_pipeline_shading_rate ? 8 : 0);
    } else {
-      return 27;
+      return 30;
    }
 }
 
@@ -3428,6 +3447,13 @@ tu6_emit_rast(struct tu_cs *cs,
                      .rendertargetindexincr = multiview,
                      .viewportindexincr = multiview && per_view_viewport));
 
+   if (CHIP >= A8XX) {
+      tu_cs_emit_regs(cs, GRAS_SU_STEREO_CNTL(CHIP,
+         .rendertargetindexincr = multiview,
+         .viewportindexincr = multiview && per_view_viewport,
+      ));
+   }
+
    bool depth_clip_enable = vk_rasterization_state_depth_clip_enable(rs);
 
    tu_cs_emit_regs(cs,
@@ -3437,7 +3463,7 @@ tu6_emit_rast(struct tu_cs *cs,
                      /* To support VK_EXT_depth_clamp_zero_one on a7xx+ */
                      .z_clamp_enable = rs->depth_clamp_enable || CHIP >= A7XX,
                      .zero_gb_scale_z = vp->depth_clip_negative_one_to_one ? 0 : 1,
-                     .vp_clip_code_ignore = 1));;
+                     .vp_clip_code_ignore = 1));
 
    enum a6xx_polygon_mode polygon_mode = tu6_polygon_mode(rs->polygon_mode);
 
@@ -3446,7 +3472,10 @@ tu6_emit_rast(struct tu_cs *cs,
    tu_cs_emit_regs(cs,
                    PC_DGEN_RAST_CNTL(CHIP, polygon_mode));
 
-   if (CHIP == A7XX || cs->device->physical_device->info->props.is_a702) {
+   if (CHIP >= A8XX)
+      tu_cs_emit_regs(cs, GRAS_RAST_CNTL(CHIP, polygon_mode));
+
+   if (CHIP >= A7XX || cs->device->physical_device->info->props.is_a702) {
       tu_cs_emit_regs(cs, VPC_PS_RAST_CNTL(CHIP, polygon_mode));
    }
 
@@ -3457,9 +3486,11 @@ tu6_emit_rast(struct tu_cs *cs,
       tu_cs_emit_regs(cs, VPC_UNKNOWN_9107(CHIP,
          .raster_discard = rs->rasterizer_discard_enable));
    } else {
-      tu_cs_emit_regs(cs, VPC_RAST_STREAM_CNTL_V2(CHIP,
-         .stream = rs->rasterization_stream,
-         .discard = rs->rasterizer_discard_enable));
+      if (CHIP == A7XX) {
+         tu_cs_emit_regs(cs, VPC_RAST_STREAM_CNTL_V2(CHIP,
+            .stream = rs->rasterization_stream,
+            .discard = rs->rasterizer_discard_enable));
+      }
 
       bool conservative_ras_en =
          rs->conservative_mode ==
@@ -3641,7 +3672,9 @@ tu6_emit_rb_depth_cntl(struct tu_cs *cs,
          .z_read_enable =
             (ds->depth.test_enable && (zfunc != FUNC_NEVER && zfunc != FUNC_ALWAYS)) ||
             ds->depth.bounds_test.enable,
-         .z_bounds_enable = ds->depth.bounds_test.enable));
+         .z_bounds_enable = ds->depth.bounds_test.enable,
+         .o_depth_01_clamp_en = CHIP >= A8XX,
+      ));
       tu_cs_emit_regs(cs, GRAS_SU_DEPTH_CNTL(CHIP, depth_test));
    } else {
       tu_cs_emit_regs(cs, A6XX_RB_DEPTH_CNTL());

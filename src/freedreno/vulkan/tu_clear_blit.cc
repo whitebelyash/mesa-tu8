@@ -375,11 +375,17 @@ r2d_src_buffer_unaligned(struct tu_cmd_buffer *cmd,
    enum a6xx_format color_format = fmt.fmt;
    fixup_src_format(&format, dst_format, &color_format);
 
-   uint32_t offset_texels = ((va & 0x3f) / util_format_get_blocksize(format));
-   va &= ~0x3f;
-   tu_cs_emit_regs(cs, TPL1_A2D_BLT_CNTL(CHIP, .raw_copy = false,
-                                         .start_offset_texels = offset_texels,
-                                         .type = A6XX_TEX_IMG_BUFFER));
+   uint32_t offset_texels = 0;
+   if (CHIP < A8XX) {
+      offset_texels = ((va & 0x3f) / util_format_get_blocksize(format));
+      va &= ~0x3f;
+   }
+
+   tu_cs_emit_regs(cs, TPL1_A2D_BLT_CNTL(CHIP,
+      .raw_copy = false,
+      .type = A6XX_TEX_IMG_BUFFER,
+      .start_offset_texels = offset_texels,
+   ));
 
    tu_cs_emit_regs(cs,
                    TPL1_A2D_SRC_TEXTURE_INFO(CHIP, .color_format = color_format,
@@ -875,18 +881,18 @@ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
          .cs_bindless = CHIP == A6XX ? 0x1f : 0xff,
          .gfx_bindless = CHIP == A6XX ? 0x1f : 0xff,));
 
-   with_crb (cs, 2 * 5 + 2 * 11) {
+   with_crb (cs, 2 * 5 + 2 * 12) {
       tu6_emit_xs_config<CHIP>(crb, { .vs = vs, .fs = fs });
       struct tu_pvtmem_config pvtmem = {};
-      tu6_emit_xs(crb, cs->device, MESA_SHADER_VERTEX, vs, &pvtmem, vs_iova);
-      tu6_emit_xs(crb, cs->device, MESA_SHADER_FRAGMENT, fs, &pvtmem, fs_iova);
+      tu6_emit_xs<CHIP>(crb, cs->device, MESA_SHADER_VERTEX, vs, &pvtmem, vs_iova);
+      tu6_emit_xs<CHIP>(crb, cs->device, MESA_SHADER_FRAGMENT, fs, &pvtmem, fs_iova);
    }
 
    tu6_emit_xs_constants(cs, MESA_SHADER_VERTEX, vs, vs_iova);
    tu6_emit_xs_constants(cs, MESA_SHADER_FRAGMENT, fs, fs_iova);
 
    tu_cs_emit_regs(cs, PC_CNTL(CHIP));
-   if (CHIP == A7XX) {
+   if (CHIP >= A7XX) {
       tu_cs_emit_regs(cs, VPC_PC_CNTL(CHIP));
    }
 
@@ -918,7 +924,8 @@ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
    if (CHIP == A6XX) {
       tu_cs_emit_regs(cs, VPC_UNKNOWN_9107(CHIP));
    } else {
-      tu_cs_emit_regs(cs, VPC_RAST_STREAM_CNTL_V2(CHIP));
+      if (CHIP == A7XX)
+         tu_cs_emit_regs(cs, VPC_RAST_STREAM_CNTL_V2(CHIP));
 
       tu_cs_emit_regs(cs, RB_RENDER_CNTL(CHIP,
             .raster_mode = TYPE_TILED,
@@ -1359,7 +1366,16 @@ r3d_src_gmem(struct tu_cmd_buffer *cmd,
    tu_desc_set_tex_line_offset<CHIP>(desc, cmd->state.tiling->tile0.width * cpp);
    tu_desc_set_array_slice_offset<CHIP>(desc, 0);
    tu_desc_set_depth<CHIP>(desc, 1);
-   tu_desc_set_addr<CHIP>(desc, cmd->device->physical_device->gmem_base + gmem_offset);
+
+   uint64_t va = gmem_offset;
+   if (CHIP < A8XX) {
+      /* For gen8, address is simply gmem_offset if tile_mode is gmem
+       * tiling (TILE6_2)
+       */
+      va += cmd->device->physical_device->gmem_base;
+   }
+
+   tu_desc_set_addr<CHIP>(desc, va);
 
    /* patch the format so that depth/stencil get the right format and swizzle */
    tu_desc_set_format<CHIP>(desc, fmt);
@@ -1640,6 +1656,10 @@ r3d_setup(struct tu_cmd_buffer *cmd,
 
    tu_cs_emit_regs(cs, A6XX_RB_MRT_CONTROL(0,
       .component_enable = aspect_write_mask(dst_format, aspect_mask)));
+   if (CHIP >= A8XX) {
+      tu_cs_emit_regs(cs, SP_MRT_BLEND_CNTL_REG(CHIP, 0,
+         .component_write_mask = aspect_write_mask(dst_format, aspect_mask)));
+   }
    tu_cs_emit_regs(cs, A6XX_RB_SRGB_CNTL(util_format_is_srgb(dst_format)));
    tu_cs_emit_regs(cs, A6XX_SP_SRGB_CNTL(util_format_is_srgb(dst_format)));
 
@@ -4190,11 +4210,17 @@ tu_clear_sysmem_attachments(struct tu_cmd_buffer *cmd,
    tu_cs_emit_regs(cs,
                    A6XX_RB_PS_MRT_CNTL(.mrt = mrt_count));
 
-   tu_cs_emit_regs(cs, SP_BLEND_CNTL(CHIP));
+   tu_cs_emit_regs(cs, SP_BLEND_CNTL(CHIP,
+      .independent_blend_en = true,
+   ));
    tu_cs_emit_regs(cs, A6XX_RB_BLEND_CNTL(.independent_blend = 1, .sample_mask = 0xffff));
    for (uint32_t i = 0; i < mrt_count; i++) {
       tu_cs_emit_regs(cs, A6XX_RB_MRT_CONTROL(i,
             .component_enable = COND(clear_rts & (1 << i), 0xf)));
+      if (CHIP >= A8XX) {
+         tu_cs_emit_regs(cs, SP_MRT_BLEND_CNTL_REG(CHIP, i,
+            .component_write_mask = COND(clear_rts & (1 << i), 0xf)));
+      }
    }
 
    tu_cs_emit_regs(cs, GRAS_LRZ_CNTL(CHIP, 0));
@@ -5245,6 +5271,14 @@ store_cp_blit(struct tu_cmd_buffer *cmd,
       src_height += tiling->tile0.height;
    }
 
+   uint64_t va = gmem_offset;
+   if (CHIP < A8XX) {
+      /* For gen8, address is simply gmem_offset if tile_mode is gmem
+       * tiling (TILE6_2)
+       */
+      va += cmd->device->physical_device->gmem_base;
+   }
+
    tu_cs_emit_regs(cs,
                    TPL1_A2D_SRC_TEXTURE_INFO(CHIP,
                       .color_format = format,
@@ -5260,7 +5294,7 @@ store_cp_blit(struct tu_cmd_buffer *cmd,
                    TPL1_A2D_SRC_TEXTURE_SIZE(CHIP,
                       .width = src_width,
                       .height = src_height),
-                   TPL1_A2D_SRC_TEXTURE_BASE(CHIP, .qword = cmd->device->physical_device->gmem_base + gmem_offset),
+                   TPL1_A2D_SRC_TEXTURE_BASE(CHIP, .qword = va),
                    TPL1_A2D_SRC_TEXTURE_PITCH(CHIP, .pitch = cmd->state.tiling->tile0.width * cpp));
 
    /* sync GMEM writes with CACHE. */

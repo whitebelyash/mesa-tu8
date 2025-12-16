@@ -802,4 +802,15 @@ private:
 #define with_crb(...) \
    for (tu_crb crb(__VA_ARGS__); crb.first; crb.first = false)
 
+template <chip CHIP>
+static inline fd_reg_pair
+tu_scratch_reg(int idx, uint32_t val = 0)
+{
+   if (CHIP >= A8XX) {
+      return CP_SCRATCH_GLOBAL_REG(CHIP, idx, val);
+   } else {
+      return CP_SCRATCH_REG(CHIP, idx, val);
+   }
+}
+
 #endif /* TU_CS_H */

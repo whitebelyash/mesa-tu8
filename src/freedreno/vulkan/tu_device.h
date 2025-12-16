@@ -375,10 +375,6 @@ struct tu_device
    struct tu_suballocator vis_stream_suballocator;
    mtx_t vis_stream_suballocator_mtx;
 
-   /* the blob seems to always use 8K factor and 128K param sizes, copy them */
-#define TU_TESS_FACTOR_SIZE (8 * 1024)
-#define TU_TESS_PARAM_SIZE (128 * 1024)
-#define TU_TESS_BO_SIZE (TU_TESS_FACTOR_SIZE + TU_TESS_PARAM_SIZE)
    /* Lazily allocated, protected by the device mutex. */
    struct tu_bo *tess_bo;
 
@@ -499,6 +495,25 @@ struct tu_device
    uint32_t vis_stream_size;
 };
 VK_DEFINE_HANDLE_CASTS(tu_device, vk.base, VkDevice, VK_OBJECT_TYPE_DEVICE)
+
+template <chip_range_support>
+struct TU_TESS;
+
+template <chip CHIP>
+struct TU_TESS<chip_range(CHIP <= A7XX)> {
+   /* the blob seems to always use 8K factor and 128K param sizes, copy them */
+   static const size_t FACTOR_SIZE = 8 * 1024;
+   static const size_t PARAM_SIZE = 128 * 1024;
+   static const size_t BO_SIZE = FACTOR_SIZE + PARAM_SIZE;
+};
+
+template <chip CHIP>
+struct TU_TESS<chip_range(CHIP >= A8XX)> {
+   /* for gen8, buffers are sized for two draws: */
+   static const size_t FACTOR_SIZE = 0x4040;
+   static const size_t PARAM_SIZE = 0x40000;
+   static const size_t BO_SIZE = FACTOR_SIZE + PARAM_SIZE;
+};
 
 struct tu_device_memory
 {
