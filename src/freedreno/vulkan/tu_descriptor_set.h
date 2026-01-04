@@ -252,48 +252,79 @@ template <chip CHIP>
 static inline void
 tu_desc_set_swiz(uint32_t *desc, const uint8_t (&swiz)[4])
 {
-   desc[0] = pkt_field_set(A6XX_TEX_CONST_0_SWIZ_X, desc[0], fdl6_swiz(swiz[0]));
-   desc[0] = pkt_field_set(A6XX_TEX_CONST_0_SWIZ_Y, desc[0], fdl6_swiz(swiz[1]));
-   desc[0] = pkt_field_set(A6XX_TEX_CONST_0_SWIZ_Z, desc[0], fdl6_swiz(swiz[2]));
-   desc[0] = pkt_field_set(A6XX_TEX_CONST_0_SWIZ_W, desc[0], fdl6_swiz(swiz[3]));
+   if (CHIP >= A8XX) {
+      desc[3] = pkt_field_set(A8XX_TEX_MEMOBJ_3_SWIZ_X, desc[3], fdl8_swiz(swiz[0]));
+      desc[3] = pkt_field_set(A8XX_TEX_MEMOBJ_3_SWIZ_Y, desc[3], fdl8_swiz(swiz[1]));
+      desc[3] = pkt_field_set(A8XX_TEX_MEMOBJ_3_SWIZ_Z, desc[3], fdl8_swiz(swiz[2]));
+      desc[3] = pkt_field_set(A8XX_TEX_MEMOBJ_3_SWIZ_W, desc[3], fdl8_swiz(swiz[3]));
+   } else {
+      desc[0] = pkt_field_set(A6XX_TEX_CONST_0_SWIZ_X, desc[0], fdl6_swiz(swiz[0]));
+      desc[0] = pkt_field_set(A6XX_TEX_CONST_0_SWIZ_Y, desc[0], fdl6_swiz(swiz[1]));
+      desc[0] = pkt_field_set(A6XX_TEX_CONST_0_SWIZ_Z, desc[0], fdl6_swiz(swiz[2]));
+      desc[0] = pkt_field_set(A6XX_TEX_CONST_0_SWIZ_W, desc[0], fdl6_swiz(swiz[3]));
+   }
 }
 
 template <chip CHIP>
 static inline enum a6xx_format
 tu_desc_get_format(uint32_t *desc)
 {
-   return (enum a6xx_format)pkt_field_get(A6XX_TEX_CONST_0_FMT, desc[0]);
+   if (CHIP >= A8XX) {
+      return (enum a6xx_format)pkt_field_get(A8XX_TEX_MEMOBJ_3_FMT, desc[3]);
+   } else {
+      return (enum a6xx_format)pkt_field_get(A6XX_TEX_CONST_0_FMT, desc[0]);
+   }
 }
 
 template <chip CHIP>
 static inline void
 tu_desc_set_format(uint32_t *desc, enum a6xx_format fmt)
 {
-   desc[0] = pkt_field_set(A6XX_TEX_CONST_0_FMT, desc[0], fmt);
+   if (CHIP >= A8XX) {
+      desc[3] = pkt_field_set(A8XX_TEX_MEMOBJ_3_FMT, desc[3], fmt);
+   } else {
+      desc[0] = pkt_field_set(A6XX_TEX_CONST_0_FMT, desc[0], fmt);
+   }
 }
 
 template <chip CHIP>
 static inline void
 tu_desc_set_swap(uint32_t *desc, enum a3xx_color_swap swap)
 {
-   desc[0] = pkt_field_set(A6XX_TEX_CONST_0_SWAP, desc[0], swap);
+   if (CHIP >= A8XX) {
+      desc[3] = pkt_field_set(A8XX_TEX_MEMOBJ_3_SWAP, desc[3], swap);
+   } else {
+      desc[0] = pkt_field_set(A6XX_TEX_CONST_0_SWAP, desc[0], swap);
+   }
 }
 
 template <chip CHIP>
 static inline void
 tu_desc_set_tile_mode(uint32_t *desc, enum a6xx_tile_mode tile_mode)
 {
-   desc[0] = pkt_field_set(A6XX_TEX_CONST_0_TILE_MODE, desc[0], tile_mode);
+   if (CHIP >= A8XX) {
+      desc[4] = pkt_field_set(A8XX_TEX_MEMOBJ_4_TILE_MODE, desc[4], tile_mode);
+   } else {
+      desc[0] = pkt_field_set(A6XX_TEX_CONST_0_TILE_MODE, desc[0], tile_mode);
+   }
 }
 
 template <chip CHIP>
 static inline void
 tu_desc_set_tile_all(uint32_t *desc, bool tile_all)
 {
-   if (tile_all) {
-      desc[3] |= A6XX_TEX_CONST_3_TILE_ALL;
+   if (CHIP >= A8XX) {
+      if (tile_all) {
+         desc[4] |= A8XX_TEX_MEMOBJ_4_TILE_ALL;
+      } else {
+         desc[4] &= ~A8XX_TEX_MEMOBJ_4_TILE_ALL;
+      }
    } else {
-      desc[3] &= ~A6XX_TEX_CONST_3_TILE_ALL;
+      if (tile_all) {
+         desc[3] |= A6XX_TEX_CONST_3_TILE_ALL;
+      } else {
+         desc[3] &= ~A6XX_TEX_CONST_3_TILE_ALL;
+      }
    }
 }
 
@@ -301,80 +332,123 @@ template <chip CHIP>
 static inline enum a6xx_tex_type
 tu_desc_get_type(uint32_t *desc)
 {
-   return (enum a6xx_tex_type)pkt_field_get(A6XX_TEX_CONST_2_TYPE, desc[2]);
+   if (CHIP >= A8XX) {
+     return (enum a6xx_tex_type)pkt_field_get(A8XX_TEX_MEMOBJ_1_TYPE, desc[1]);
+   } else {
+     return (enum a6xx_tex_type)pkt_field_get(A6XX_TEX_CONST_2_TYPE, desc[2]);
+   }
 }
 
 template <chip CHIP>
 static inline void
 tu_desc_set_type(uint32_t *desc, enum a6xx_tex_type type)
 {
-   desc[2] = pkt_field_set(A6XX_TEX_CONST_2_TYPE, desc[2], type);
+   if (CHIP >= A8XX) {
+      desc[1] = pkt_field_set(A8XX_TEX_MEMOBJ_1_TYPE, desc[1], type);
+   } else {
+      desc[2] = pkt_field_set(A6XX_TEX_CONST_2_TYPE, desc[2], type);
+   }
 }
 
 template <chip CHIP>
 static inline void
 tu_desc_get_dim(uint32_t *desc, uint32_t *width, uint32_t *height)
 {
-   *width  = pkt_field_get(A6XX_TEX_CONST_1_WIDTH, desc[1]);
-   *height = pkt_field_get(A6XX_TEX_CONST_1_HEIGHT, desc[1]);
+   if (CHIP >= A8XX) {
+      *width  = pkt_field_get(A8XX_TEX_MEMOBJ_2_WIDTH, desc[2]);
+      *height = pkt_field_get(A8XX_TEX_MEMOBJ_2_HEIGHT, desc[2]);
+   } else {
+      *width  = pkt_field_get(A6XX_TEX_CONST_1_WIDTH, desc[1]);
+      *height = pkt_field_get(A6XX_TEX_CONST_1_HEIGHT, desc[1]);
+   }
 }
 
 template <chip CHIP>
 static inline void
 tu_desc_set_dim(uint32_t *desc, uint32_t width, uint32_t height)
 {
-   desc[1] = pkt_field_set(A6XX_TEX_CONST_1_WIDTH, desc[1], width);
-   desc[1] = pkt_field_set(A6XX_TEX_CONST_1_HEIGHT, desc[1], height);
+   if (CHIP >= A8XX) {
+      desc[2] = pkt_field_set(A8XX_TEX_MEMOBJ_2_WIDTH, desc[2], width);
+      desc[2] = pkt_field_set(A8XX_TEX_MEMOBJ_2_HEIGHT, desc[2], height);
+   } else {
+      desc[1] = pkt_field_set(A6XX_TEX_CONST_1_WIDTH, desc[1], width);
+      desc[1] = pkt_field_set(A6XX_TEX_CONST_1_HEIGHT, desc[1], height);
+   }
 }
 
 template <chip CHIP>
 static inline uint32_t
 tu_desc_get_depth(uint32_t *desc)
 {
-   return pkt_field_get(A6XX_TEX_CONST_5_DEPTH, desc[5]);
+   if (CHIP >= A8XX) {
+      return pkt_field_get(A8XX_TEX_MEMOBJ_1_DEPTH, desc[1]);
+   } else {
+      return pkt_field_get(A6XX_TEX_CONST_5_DEPTH, desc[5]);
+   }
 }
 
 template <chip CHIP>
 static inline void
 tu_desc_set_depth(uint32_t *desc, uint32_t depth)
 {
-   desc[5] = pkt_field_set(A6XX_TEX_CONST_5_DEPTH, desc[5], depth);
+   if (CHIP >= A8XX) {
+      desc[1] = pkt_field_set(A8XX_TEX_MEMOBJ_1_DEPTH, desc[1], depth);
+   } else {
+      desc[5] = pkt_field_set(A6XX_TEX_CONST_5_DEPTH, desc[5], depth);
+   }
 }
 
 template <chip CHIP>
 static inline void
 tu_desc_set_struct_size_texels(uint32_t *desc, uint32_t struct_size_texels)
 {
-   desc[2] = pkt_field_set(A6XX_TEX_CONST_2_STRUCTSIZETEXELS, desc[2], struct_size_texels);
+   if (CHIP >= A8XX) {
+      desc[1] = pkt_field_set(A8XX_TEX_MEMOBJ_1_STRUCTSIZETEXELS, desc[1], struct_size_texels);
+   } else {
+      desc[2] = pkt_field_set(A6XX_TEX_CONST_2_STRUCTSIZETEXELS, desc[2], struct_size_texels);
+   }
 }
 
 template <chip CHIP>
 static inline void
 tu_desc_set_min_line_offset(uint32_t *desc, uint32_t min_line_offset)
 {
-   desc[2] = pkt_field_set(A6XX_TEX_CONST_2_PITCHALIGN, desc[2], min_line_offset);
+   if (CHIP >= A8XX) {
+      desc[6] = pkt_field_set(A8XX_TEX_MEMOBJ_6_MIN_LINE_OFFSET, desc[6], min_line_offset);
+   } else {
+      desc[2] = pkt_field_set(A6XX_TEX_CONST_2_PITCHALIGN, desc[2], min_line_offset);
+   }
 }
 
 template <chip CHIP>
 static inline void
 tu_desc_set_tex_line_offset(uint32_t *desc, uint32_t tex_line_offset)
 {
-   desc[2] = pkt_field_set(A6XX_TEX_CONST_2_PITCH, desc[2], tex_line_offset);
+   if (CHIP >= A8XX) {
+      desc[6] = pkt_field_set(A8XX_TEX_MEMOBJ_6_TEX_LINE_OFFSET, desc[6], tex_line_offset);
+   } else {
+      desc[2] = pkt_field_set(A6XX_TEX_CONST_2_PITCH, desc[2], tex_line_offset);
+   }
 }
 
 template <chip CHIP>
 static inline void
 tu_desc_set_array_slice_offset(uint32_t *desc, uint32_t array_slice_offset)
 {
-   desc[3] = pkt_field_set(A6XX_TEX_CONST_3_ARRAY_PITCH, desc[3], array_slice_offset);
+   if (CHIP >= A8XX) {
+      desc[7] = pkt_field_set(A8XX_TEX_MEMOBJ_7_ARRAY_SLICE_OFFSET, desc[7], array_slice_offset);
+   } else {
+      desc[3] = pkt_field_set(A6XX_TEX_CONST_3_ARRAY_PITCH, desc[3], array_slice_offset);
+   }
 }
 
 template <chip CHIP>
 static inline uint64_t
 tu_desc_get_addr(uint32_t *desc)
 {
-   uint64_t addr = desc[4];
-   addr |= (uint64_t)(desc[5] & 0xffff) << 32;
+   const int idx = (CHIP >= A8XX) ? 0 : 4;
+   uint64_t addr = desc[idx];
+   addr |= (uint64_t)(desc[idx+1] & 0xffff) << 32;
    return addr;
 }
 
@@ -382,15 +456,20 @@ template <chip CHIP>
 static inline void
 tu_desc_set_addr(uint32_t *desc, uint64_t addr)
 {
-   desc[4] = addr;
-   desc[5] = (desc[5] & ~0xffff) | addr >> 32;
+   const int idx = (CHIP >= A8XX) ? 0 : 4;
+   desc[idx] = addr;
+   desc[idx+1] = (desc[idx+1] & ~0xffff) | addr >> 32;
 }
 
 template <chip CHIP>
 static inline uint64_t
 tu_desc_get_ubwc(uint32_t *desc)
 {
-   if (desc[3] & A6XX_TEX_CONST_3_FLAG) {
+   if ((CHIP >= A8XX) && (desc[4] & A8XX_TEX_MEMOBJ_4_FLAG)) {
+      uint64_t addr = desc[4] & ~0x1f;
+      addr |= (uint64_t)(desc[5] & 0xffff) << 32;
+      return addr;
+   } else if ((CHIP <= A7XX) && (desc[3] & A6XX_TEX_CONST_3_FLAG)) {
       uint64_t addr = desc[7];
       addr |= (uint64_t)(desc[8] & 0xffff) << 32;
       return addr;
@@ -403,12 +482,23 @@ template <chip CHIP>
 static inline void
 tu_desc_set_ubwc(uint32_t *desc, uint64_t addr)
 {
-   if (addr) {
-      desc[7] = addr;
-      desc[8] = (desc[8] & 0xffff) | addr >> 32;
-      desc[3] |= A6XX_TEX_CONST_3_FLAG;
+   if (CHIP >= A8XX) {
+      assert(!(addr & 0x1f));
+      if (addr) {
+         desc[4] = (desc[4] & 0x1f) | addr;
+         desc[5] = (desc[5] & 0xffff) | addr >> 32;
+         desc[4] |= A8XX_TEX_MEMOBJ_4_FLAG;
+      } else {
+         desc[4] &= ~A8XX_TEX_MEMOBJ_4_FLAG;
+      }
    } else {
-      desc[3] &= ~A6XX_TEX_CONST_3_FLAG;
+      if (addr) {
+         desc[7] = addr;
+         desc[8] = (desc[8] & 0xffff) | addr >> 32;
+         desc[3] |= A6XX_TEX_CONST_3_FLAG;
+      } else {
+         desc[3] &= ~A6XX_TEX_CONST_3_FLAG;
+      }
    }
 }
 

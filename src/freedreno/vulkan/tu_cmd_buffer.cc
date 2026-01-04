@@ -4763,35 +4763,43 @@ tu_bind_descriptor_sets(struct tu_cmd_buffer *cmd,
                        i < binding->size / (4 * FDL6_TEX_CONST_DWORDS);
                        i++, dst_desc += FDL6_TEX_CONST_DWORDS) {
                      uint64_t va = tu_desc_get_addr<CHIP>(dst_desc);
-                     uint32_t desc_offset = pkt_field_get(
-                        A6XX_TEX_CONST_2_STARTOFFSETTEXELS, dst_desc[2]);
+                     if (CHIP >= A8XX) {
+                        /* gen8 buffer descriptors take a byte address, and
+                         * the STARTOFFSETTEXELS field no longer exists.
+                         * So no further munging required:
+                         */
+                        va += offset;
+                     } else {
+                        uint32_t desc_offset = pkt_field_get(
+                           A6XX_TEX_CONST_2_STARTOFFSETTEXELS, dst_desc[2]);
 
-                     /* Use descriptor's format to determine the shift amount
-                      * that's to be used on the offset value.
-                      */
-                     enum a6xx_format format = tu_desc_get_format<CHIP>(dst_desc);
-                     unsigned offset_shift;
-                     switch (format) {
-                     case FMT6_16_UINT:
-                        offset_shift = 1;
-                        break;
-                     case FMT6_32_UINT:
-                        offset_shift = 2;
-                        break;
-                     case FMT6_8_UINT:
-                     default:
-                        offset_shift = 0;
-                        break;
+                        /* Use descriptor's format to determine the shift amount
+                        * that's to be used on the offset value.
+                        */
+                        enum a6xx_format format = tu_desc_get_format<CHIP>(dst_desc);
+                        unsigned offset_shift;
+                        switch (format) {
+                        case FMT6_16_UINT:
+                           offset_shift = 1;
+                           break;
+                        case FMT6_32_UINT:
+                           offset_shift = 2;
+                           break;
+                        case FMT6_8_UINT:
+                        default:
+                           offset_shift = 0;
+                           break;
+                        }
+
+                        va += desc_offset << offset_shift;
+                        va += offset;
+                        unsigned new_offset = (va & 0x3f) >> offset_shift;
+                        va &= ~0x3full;
+                        dst_desc[2] =
+                           pkt_field_set(A6XX_TEX_CONST_2_STARTOFFSETTEXELS,
+                                       dst_desc[2], new_offset);
                      }
-
-                     va += desc_offset << offset_shift;
-                     va += offset;
-                     unsigned new_offset = (va & 0x3f) >> offset_shift;
-                     va &= ~0x3full;
                      tu_desc_set_addr<CHIP>(dst_desc, va);
-                     dst_desc[2] =
-                        pkt_field_set(A6XX_TEX_CONST_2_STARTOFFSETTEXELS,
-                                      dst_desc[2], new_offset);
                   }
                }
 
