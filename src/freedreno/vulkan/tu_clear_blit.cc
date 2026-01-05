@@ -1093,18 +1093,32 @@ r3d_src_common(struct tu_cmd_buffer *cmd,
    if (ubwc_addr)
       tu_desc_set_ubwc<CHIP>(texture.map, ubwc_addr + offset_ubwc);
 
-   texture.map[FDL6_TEX_CONST_DWORDS + 0] =
-      A6XX_TEX_SAMP_0_XY_MAG(tu6_tex_filter(filter, false)) |
-      A6XX_TEX_SAMP_0_XY_MIN(tu6_tex_filter(filter, false)) |
-      A6XX_TEX_SAMP_0_WRAP_S(A6XX_TEX_CLAMP_TO_EDGE) |
-      A6XX_TEX_SAMP_0_WRAP_T(A6XX_TEX_CLAMP_TO_EDGE) |
-      A6XX_TEX_SAMP_0_WRAP_R(A6XX_TEX_CLAMP_TO_EDGE) |
-      0x60000; /* XXX used by blob, doesn't seem necessary */
-   texture.map[FDL6_TEX_CONST_DWORDS + 1] =
-      A6XX_TEX_SAMP_1_UNNORM_COORDS |
-      A6XX_TEX_SAMP_1_MIPFILTER_LINEAR_FAR;
-   texture.map[FDL6_TEX_CONST_DWORDS + 2] = 0;
-   texture.map[FDL6_TEX_CONST_DWORDS + 3] = 0;
+   if (CHIP >= A8XX) {
+      texture.map[FDL6_TEX_CONST_DWORDS + 0] =
+         A8XX_TEX_SAMP_0_MIPMAPING_DIS |
+         A8XX_TEX_SAMP_0_XY_MAG(tu6_tex_filter(filter, false)) |
+         A8XX_TEX_SAMP_0_XY_MIN(tu6_tex_filter(filter, false)) |
+         A8XX_TEX_SAMP_0_WRAP_S(A6XX_TEX_CLAMP_TO_EDGE) |
+         A8XX_TEX_SAMP_0_WRAP_T(A6XX_TEX_CLAMP_TO_EDGE) |
+         A8XX_TEX_SAMP_0_WRAP_R(A6XX_TEX_CLAMP_TO_EDGE);
+      texture.map[FDL6_TEX_CONST_DWORDS + 1] =
+         A8XX_TEX_SAMP_1_UNNORM_COORDS;
+      texture.map[FDL6_TEX_CONST_DWORDS + 2] = 0;
+      texture.map[FDL6_TEX_CONST_DWORDS + 3] = 0;
+   } else {
+      texture.map[FDL6_TEX_CONST_DWORDS + 0] =
+         A6XX_TEX_SAMP_0_XY_MAG(tu6_tex_filter(filter, false)) |
+         A6XX_TEX_SAMP_0_XY_MIN(tu6_tex_filter(filter, false)) |
+         A6XX_TEX_SAMP_0_WRAP_S(A6XX_TEX_CLAMP_TO_EDGE) |
+         A6XX_TEX_SAMP_0_WRAP_T(A6XX_TEX_CLAMP_TO_EDGE) |
+         A6XX_TEX_SAMP_0_WRAP_R(A6XX_TEX_CLAMP_TO_EDGE) |
+         0x60000; /* XXX used by blob, doesn't seem necessary */
+      texture.map[FDL6_TEX_CONST_DWORDS + 1] =
+         A6XX_TEX_SAMP_1_UNNORM_COORDS |
+         A6XX_TEX_SAMP_1_MIPFILTER_LINEAR_FAR;
+      texture.map[FDL6_TEX_CONST_DWORDS + 2] = 0;
+      texture.map[FDL6_TEX_CONST_DWORDS + 3] = 0;
+   }
 
    tu_cs_emit_pkt7(cs, CP_LOAD_STATE6_FRAG, 3);
    tu_cs_emit(cs, CP_LOAD_STATE6_0_DST_OFF(0) |

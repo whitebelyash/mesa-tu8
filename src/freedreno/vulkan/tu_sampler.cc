@@ -12,6 +12,7 @@
 #include "tu_device.h"
 #include "tu_util.h"
 
+template <chip CHIP>
 VKAPI_ATTR VkResult VKAPI_CALL
 tu_CreateSampler(VkDevice _device,
                  const VkSamplerCreateInfo *pCreateInfo,
@@ -83,40 +84,75 @@ tu_CreateSampler(VkDevice _device,
    float min_lod = CLAMP(pCreateInfo->minLod, 0.0f, 4095.0f / 256.0f);
    float max_lod = CLAMP(pCreateInfo->maxLod, 0.0f, 4095.0f / 256.0f);
 
-   sampler->descriptor[0] =
-      COND(miplinear, A6XX_TEX_SAMP_0_MIPFILTER_LINEAR_NEAR) |
-      A6XX_TEX_SAMP_0_XY_MAG(tu6_tex_filter(pCreateInfo->magFilter, aniso)) |
-      A6XX_TEX_SAMP_0_XY_MIN(tu6_tex_filter(pCreateInfo->minFilter, aniso)) |
-      A6XX_TEX_SAMP_0_ANISO((enum a6xx_tex_aniso) aniso) |
-      A6XX_TEX_SAMP_0_WRAP_S(tu6_tex_wrap(pCreateInfo->addressModeU)) |
-      A6XX_TEX_SAMP_0_WRAP_T(tu6_tex_wrap(pCreateInfo->addressModeV)) |
-      A6XX_TEX_SAMP_0_WRAP_R(tu6_tex_wrap(pCreateInfo->addressModeW)) |
-      A6XX_TEX_SAMP_0_LOD_BIAS(pCreateInfo->mipLodBias);
-   sampler->descriptor[1] =
-      COND(pCreateInfo->flags & VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT,
-           A6XX_TEX_SAMP_1_CUBEMAPSEAMLESSFILTOFF) |
-      COND(pCreateInfo->unnormalizedCoordinates, A6XX_TEX_SAMP_1_UNNORM_COORDS) |
-      A6XX_TEX_SAMP_1_MIN_LOD(min_lod) |
-      A6XX_TEX_SAMP_1_MAX_LOD(max_lod) |
-      COND(pCreateInfo->compareEnable,
-           A6XX_TEX_SAMP_1_COMPARE_FUNC(tu6_compare_func(pCreateInfo->compareOp)));
-   sampler->descriptor[2] =
-      A6XX_TEX_SAMP_2_BCOLOR(border_color) |
-      A6XX_TEX_SAMP_2_FASTBORDERCOLOR(fast_border_color) |
-      COND(fast_border_color_enable, A6XX_TEX_SAMP_2_FASTBORDERCOLOREN);
-   sampler->descriptor[3] = 0;
-
-   if (sampler->vk.reduction_mode != VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE) {
-      sampler->descriptor[2] |= A6XX_TEX_SAMP_2_REDUCTION_MODE(
-         tu6_reduction_mode(sampler->vk.reduction_mode));
-   }
-
    sampler->vk.ycbcr_conversion = ycbcr_conversion ?
       vk_ycbcr_conversion_from_handle(ycbcr_conversion->conversion) : NULL;
 
-   if (sampler->vk.ycbcr_conversion &&
-       sampler->vk.ycbcr_conversion->state.chroma_filter == VK_FILTER_LINEAR) {
-      sampler->descriptor[2] |= A6XX_TEX_SAMP_2_CHROMA_LINEAR;
+   if (CHIP >= A8XX) {
+      sampler->descriptor[0] =
+         COND(miplinear, A8XX_TEX_SAMP_0_MIPFILTER_LINEAR_NEAR) |
+         A8XX_TEX_SAMP_0_XY_MAG(tu6_tex_filter(pCreateInfo->magFilter, aniso)) |
+         A8XX_TEX_SAMP_0_XY_MIN(tu6_tex_filter(pCreateInfo->minFilter, aniso)) |
+         A8XX_TEX_SAMP_0_WRAP_S(tu6_tex_wrap(pCreateInfo->addressModeU)) |
+         A8XX_TEX_SAMP_0_WRAP_T(tu6_tex_wrap(pCreateInfo->addressModeV)) |
+         A8XX_TEX_SAMP_0_WRAP_R(tu6_tex_wrap(pCreateInfo->addressModeW)) |
+         A8XX_TEX_SAMP_0_LOD_BIAS(pCreateInfo->mipLodBias) |
+         A8XX_TEX_SAMP_0_ANISO((enum a6xx_tex_aniso)aniso);
+
+      sampler->descriptor[1] =
+         A8XX_TEX_SAMP_1_MAX_LOD(max_lod) |
+         A8XX_TEX_SAMP_1_MIN_LOD(min_lod) |
+         COND(pCreateInfo->compareEnable, A8XX_TEX_SAMP_1_COMPARE_FUNC(tu6_compare_func(pCreateInfo->compareOp))) |
+         COND(pCreateInfo->flags & VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT,
+            A8XX_TEX_SAMP_1_CUBEMAPSEAMLESSFILTOFF) |
+         COND(pCreateInfo->unnormalizedCoordinates, A8XX_TEX_SAMP_1_UNNORM_COORDS);
+      sampler->descriptor[2] =
+         A8XX_TEX_SAMP_2_BCOLOR(border_color) |
+         A8XX_TEX_SAMP_2_FASTBORDERCOLOR(fast_border_color) |
+         COND(fast_border_color_enable, A8XX_TEX_SAMP_2_FASTBORDERCOLOREN);
+      sampler->descriptor[3] = 0;
+
+      if (sampler->vk.reduction_mode != VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE) {
+         sampler->descriptor[1] |= A8XX_TEX_SAMP_1_REDUCTION_MODE(
+            tu6_reduction_mode(sampler->vk.reduction_mode));
+      }
+
+      if (sampler->vk.ycbcr_conversion &&
+          sampler->vk.ycbcr_conversion->state.chroma_filter == VK_FILTER_LINEAR) {
+         sampler->descriptor[1] |= A8XX_TEX_SAMP_1_CHROMA_LINEAR;
+      }
+   } else {
+      sampler->descriptor[0] =
+         COND(miplinear, A6XX_TEX_SAMP_0_MIPFILTER_LINEAR_NEAR) |
+         A6XX_TEX_SAMP_0_XY_MAG(tu6_tex_filter(pCreateInfo->magFilter, aniso)) |
+         A6XX_TEX_SAMP_0_XY_MIN(tu6_tex_filter(pCreateInfo->minFilter, aniso)) |
+         A6XX_TEX_SAMP_0_ANISO((enum a6xx_tex_aniso) aniso) |
+         A6XX_TEX_SAMP_0_WRAP_S(tu6_tex_wrap(pCreateInfo->addressModeU)) |
+         A6XX_TEX_SAMP_0_WRAP_T(tu6_tex_wrap(pCreateInfo->addressModeV)) |
+         A6XX_TEX_SAMP_0_WRAP_R(tu6_tex_wrap(pCreateInfo->addressModeW)) |
+         A6XX_TEX_SAMP_0_LOD_BIAS(pCreateInfo->mipLodBias);
+      sampler->descriptor[1] =
+         COND(pCreateInfo->flags & VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT,
+            A6XX_TEX_SAMP_1_CUBEMAPSEAMLESSFILTOFF) |
+         COND(pCreateInfo->unnormalizedCoordinates, A6XX_TEX_SAMP_1_UNNORM_COORDS) |
+         A6XX_TEX_SAMP_1_MIN_LOD(min_lod) |
+         A6XX_TEX_SAMP_1_MAX_LOD(max_lod) |
+         COND(pCreateInfo->compareEnable,
+            A6XX_TEX_SAMP_1_COMPARE_FUNC(tu6_compare_func(pCreateInfo->compareOp)));
+      sampler->descriptor[2] =
+         A6XX_TEX_SAMP_2_BCOLOR(border_color) |
+         A6XX_TEX_SAMP_2_FASTBORDERCOLOR(fast_border_color) |
+         COND(fast_border_color_enable, A6XX_TEX_SAMP_2_FASTBORDERCOLOREN);
+      sampler->descriptor[3] = 0;
+
+      if (sampler->vk.reduction_mode != VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE) {
+         sampler->descriptor[2] |= A6XX_TEX_SAMP_2_REDUCTION_MODE(
+            tu6_reduction_mode(sampler->vk.reduction_mode));
+      }
+
+      if (sampler->vk.ycbcr_conversion &&
+          sampler->vk.ycbcr_conversion->state.chroma_filter == VK_FILTER_LINEAR) {
+         sampler->descriptor[2] |= A6XX_TEX_SAMP_2_CHROMA_LINEAR;
+      }
    }
 
    /* TODO:
@@ -127,7 +163,9 @@ tu_CreateSampler(VkDevice _device,
 
    return VK_SUCCESS;
 }
+TU_GENX(tu_CreateSampler);
 
+template <chip CHIP>
 VKAPI_ATTR void VKAPI_CALL
 tu_DestroySampler(VkDevice _device,
                   VkSampler _sampler,
@@ -139,11 +177,22 @@ tu_DestroySampler(VkDevice _device,
    if (!sampler)
       return;
 
-   bool fast_border_color =
-      (sampler->descriptor[2] & A6XX_TEX_SAMP_2_FASTBORDERCOLOREN) != 0;
-   if (!fast_border_color) {
-      const uint32_t border_color =
+   bool fast_border_color;
+   uint32_t border_color;
+
+   if (CHIP >= A8XX) {
+      fast_border_color =
+         (sampler->descriptor[2] & A8XX_TEX_SAMP_2_FASTBORDERCOLOREN) != 0;
+      border_color =
+         pkt_field_get(A8XX_TEX_SAMP_2_FASTBORDERCOLOR, sampler->descriptor[2]);
+   } else {
+      fast_border_color =
+         (sampler->descriptor[2] & A6XX_TEX_SAMP_2_FASTBORDERCOLOREN) != 0;
+      border_color =
          pkt_field_get(A6XX_TEX_SAMP_2_BCOLOR, sampler->descriptor[2]);
+   }
+
+   if (!fast_border_color) {
       /* if the sampler had a custom border color, free it. TODO: no lock */
       mtx_lock(&device->mutex);
       assert(!BITSET_TEST(device->custom_border_color, border_color));
@@ -153,3 +202,4 @@ tu_DestroySampler(VkDevice _device,
 
    vk_sampler_destroy(&device->vk, pAllocator, &sampler->vk);
 }
+TU_GENX(tu_DestroySampler);
