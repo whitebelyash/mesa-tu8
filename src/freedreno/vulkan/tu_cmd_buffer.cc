@@ -255,6 +255,22 @@ tu_emit_vsc(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
    cmd->vsc_initialized = true;
 }
 
+struct tu_set_render_mode {
+   enum a6xx_marker mode;
+   bool uses_gmem;
+   bool shader_uses_rt;
+};
+
+template <chip CHIP>
+static void
+tu_set_render_mode(struct tu_cs *cs, tu_set_render_mode args)
+{
+   tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
+   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(args.mode) |
+                  COND(args.uses_gmem, A6XX_CP_SET_MARKER_0_USES_GMEM) |
+                  COND(args.shader_uses_rt, A6XX_CP_SET_MARKER_0_SHADER_USES_RT));
+}
+
 /* This workaround, copied from the blob, seems to ensure that the BVH node
  * cache is invalidated so that we don't read stale values when multiple BVHs
  * share the same address.
@@ -1507,9 +1523,7 @@ tu6_emit_tile_select(struct tu_cmd_buffer *cmd,
    const struct tu_vsc_config *vsc = tu_vsc_config(cmd, tiling);
    bool hw_binning = use_hw_binning(cmd);
 
-   tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_BIN_RENDER_START) |
-                  A6XX_CP_SET_MARKER_0_USES_GMEM);
+   tu_set_render_mode<CHIP>(cs, { .mode = RM6_BIN_RENDER_START, .uses_gmem = true });
 
    if (CHIP == A6XX && cmd->device->physical_device->has_preemption) {
       if (cmd->usage_flags & VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT)
@@ -1971,9 +1985,7 @@ tu6_emit_tile_store_cs(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
     * during preemption.  So we only emit it before the stores at the end of the
     * last subpass, not other resolves.
     */
-   tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_BIN_RESOLVE) |
-                  A6XX_CP_SET_MARKER_0_USES_GMEM);
+   tu_set_render_mode<CHIP>(cs, { .mode = RM6_BIN_RESOLVE, .uses_gmem = true });
 
    struct tu_resolve_group resolve_group = {};
 
@@ -2522,8 +2534,7 @@ tu6_emit_binning_pass(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
 
    tu6_emit_window_scissor<CHIP>(cs, 0, 0, width - 1, height - 1);
 
-   tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_BIN_VISIBILITY));
+   tu_set_render_mode<CHIP>(cs, {RM6_BIN_VISIBILITY});
 
    tu_cs_emit_pkt7(cs, CP_SET_VISIBILITY_OVERRIDE, 1);
    tu_cs_emit(cs, 0x1);
@@ -2982,8 +2993,7 @@ tu7_emit_concurrent_binning_sysmem(struct tu_cmd_buffer *cmd,
    {
       tu7_emit_concurrent_binning(cmd, cs);
 
-      tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-      tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_BIN_VISIBILITY));
+      tu_set_render_mode<CHIP>(cs, {RM6_BIN_VISIBILITY});
 
       tu_lrz_sysmem_begin<CHIP>(cmd, cs);
 
@@ -2991,8 +3001,7 @@ tu7_emit_concurrent_binning_sysmem(struct tu_cmd_buffer *cmd,
 
       tu7_write_onchip_timestamp(cs, TU_ONCHIP_CB_BV_TIMESTAMP);
 
-      tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-      tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM7_BIN_VISIBILITY_END));
+      tu_set_render_mode<CHIP>(cs, {RM7_BIN_VISIBILITY_END});
 
       tu7_thread_control(cs, CP_SET_THREAD_BR);
 
@@ -3065,8 +3074,7 @@ tu6_sysmem_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
       tu7_emit_sysmem_render_begin_regs<CHIP>(cmd, cs);
    }
 
-   tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_DIRECT_RENDER));
+   tu_set_render_mode<CHIP>(cs, {RM6_DIRECT_RENDER});
 
    /* A7XX TODO: blob doesn't use CP_SKIP_IB2_ENABLE_* */
    tu_cs_emit_pkt7(cs, CP_SKIP_IB2_ENABLE_GLOBAL, 1);
@@ -3423,8 +3431,7 @@ tu6_tile_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
              * simpler save/restore procedure can be used in between render
              * passes.
              */
-            tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-            tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM7_BIN_VISIBILITY_END));
+            tu_set_render_mode<CHIP>(cs, {RM7_BIN_VISIBILITY_END});
          }
 
          tu7_thread_control(cs, CP_SET_THREAD_BR);
@@ -3487,9 +3494,7 @@ tu6_render_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
       tu_emit_event_write<CHIP>(cmd, cs, FD_START_PRIMITIVE_CTRS);
 
    if (use_hw_binning(cmd)) {
-      tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-      tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_BIN_END_OF_DRAWS) |
-                     A6XX_CP_SET_MARKER_0_USES_GMEM);
+      tu_set_render_mode<CHIP>(cs, { .mode = RM6_BIN_END_OF_DRAWS, .uses_gmem = true });
    }
 
    /* Predicate is changed in draw_cs so we have to re-emit it */
@@ -3514,8 +3519,7 @@ tu6_render_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
                         u_trace_end_iterator(&cmd->rp_trace));
    tu_cs_emit_wfi(cs);
 
-   tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_BIN_RENDER_END));
+   tu_set_render_mode<CHIP>(cs, {RM6_BIN_RENDER_END});
 
    tu_cs_sanity_check(cs);
 
@@ -8121,8 +8125,7 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
 
    if (cmd->device->physical_device->info->props.has_rt_workaround &&
        cmd->state.program.uses_ray_intersection) {
-      tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-      tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_SHADER_USES_RT);
+      tu_set_render_mode<CHIP>(cs, { .shader_uses_rt = true });
    }
 
    /* Early exit if there is nothing to emit, saves CPU cycles */
@@ -9128,8 +9131,7 @@ tu_dispatch(struct tu_cmd_buffer *cmd,
 
    cmd->state.dirty &= ~TU_CMD_DIRTY_COMPUTE_DESC_SETS;
 
-   tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_COMPUTE));
+   tu_set_render_mode<CHIP>(cs, {RM6_COMPUTE});
 
    const uint16_t *local_size = shader->variant->local_size;
    const uint32_t *num_groups = info->blocks;
@@ -9290,8 +9292,7 @@ tu_dispatch(struct tu_cmd_buffer *cmd,
 
    if (cmd->device->physical_device->info->props.has_rt_workaround &&
        shader->variant->info.uses_ray_intersection) {
-      tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-      tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_SHADER_USES_RT);
+      tu_set_render_mode<CHIP>(cs, { .shader_uses_rt = true });
    }
 
    if (info->indirect) {
