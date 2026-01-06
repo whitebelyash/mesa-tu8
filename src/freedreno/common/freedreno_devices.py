@@ -1471,7 +1471,7 @@ a8xx_gen2 = GPUProps(
 
 # Totally fake, just to get cffdump to work:
 add_gpus([
-        GPUId(chip_id=0x44050000, name="FD830"),
+        GPUId(chip_id=0x44050001, name="FD830"),
     ], A6xxGPUInfo(
         CHIP.A8XX,
         [a7xx_base, a7xx_gen3, a8xx_base],
