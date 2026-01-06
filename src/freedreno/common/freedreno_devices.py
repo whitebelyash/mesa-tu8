@@ -1436,6 +1436,7 @@ add_gpus([
 a8xx_base = GPUProps(
         has_dp2acc = False,
         reg_size_vec4 = 96,
+        has_rt_workaround = False,
     )
 
 a8xx_gen2 = GPUProps(
