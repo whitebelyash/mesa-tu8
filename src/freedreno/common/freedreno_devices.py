@@ -1456,6 +1456,16 @@ a8xx_gen2 = GPUProps(
         gmem_ccu_depth_cache_fraction = CCUColorCacheFraction.FULL.value,
         gmem_per_ccu_depth_cache_size = 256 * 1024,
         has_fs_tex_prefetch = False,
+
+        # TODO it appears that HW shading rate is swapped to:
+        #
+        #     (hlog2 | (wlog2 << 2))
+        #
+        # on at least some gen8 devices.  Just disable the
+        # extension for now until we figure out how to deal
+        # with that.
+        has_attachment_shading_rate = False,
+        has_primitive_shading_rate = False,
 )
 
 # Totally fake, just to get cffdump to work:
