@@ -1668,39 +1668,41 @@ tu6_emit_tile_select(struct tu_cmd_buffer *cmd,
                frag_offsets[i].y = y1 - y1 / tile->frag_areas[view].height;
             }
 
-            tu_cs_emit_regs(cs, GRAS_BIN_FOVEAT(CHIP,
-                  .binscaleen = bin_scale_en,
-                  .xscale_0 = (enum a7xx_bin_scale)util_logbase2(frag_areas[0].width),
-                  .yscale_0 = (enum a7xx_bin_scale)util_logbase2(frag_areas[0].height),
-                  .xscale_1 = (enum a7xx_bin_scale)util_logbase2(frag_areas[1].width),
-                  .yscale_1 = (enum a7xx_bin_scale)util_logbase2(frag_areas[1].height),
-                  .xscale_2 = (enum a7xx_bin_scale)util_logbase2(frag_areas[2].width),
-                  .yscale_2 = (enum a7xx_bin_scale)util_logbase2(frag_areas[2].height),
-                  .xscale_3 = (enum a7xx_bin_scale)util_logbase2(frag_areas[3].width),
-                  .yscale_3 = (enum a7xx_bin_scale)util_logbase2(frag_areas[3].height),
-                  .xscale_4 = (enum a7xx_bin_scale)util_logbase2(frag_areas[4].width),
-                  .yscale_4 = (enum a7xx_bin_scale)util_logbase2(frag_areas[4].height),
-                  .xscale_5 = (enum a7xx_bin_scale)util_logbase2(frag_areas[5].width),
-                  .yscale_5 = (enum a7xx_bin_scale)util_logbase2(frag_areas[5].height)),
-               GRAS_BIN_FOVEAT_OFFSET_0(CHIP,
-                  .xoffset_0 = frag_offsets[0].x,
-                  .xoffset_1 = frag_offsets[1].x,
-                  .xoffset_2 = frag_offsets[2].x),
-               GRAS_BIN_FOVEAT_OFFSET_1(CHIP,
-                  .xoffset_3 = frag_offsets[3].x,
-                  .xoffset_4 = frag_offsets[4].x,
-                  .xoffset_5 = frag_offsets[5].x),
-               GRAS_BIN_FOVEAT_OFFSET_2(CHIP,
-                  .yoffset_0 = frag_offsets[0].y,
-                  .yoffset_1 = frag_offsets[1].y,
-                  .yoffset_2 = frag_offsets[2].y),
-               GRAS_BIN_FOVEAT_OFFSET_3(CHIP,
-                  .yoffset_3 = frag_offsets[3].y,
-                  .yoffset_4 = frag_offsets[4].y,
-                  .yoffset_5 = frag_offsets[5].y));
+            with_crb (cs, 6) {
+               crb.add(GRAS_BIN_FOVEAT(CHIP,
+                     .binscaleen = bin_scale_en,
+                     .xscale_0 = (enum a7xx_bin_scale)util_logbase2(frag_areas[0].width),
+                     .yscale_0 = (enum a7xx_bin_scale)util_logbase2(frag_areas[0].height),
+                     .xscale_1 = (enum a7xx_bin_scale)util_logbase2(frag_areas[1].width),
+                     .yscale_1 = (enum a7xx_bin_scale)util_logbase2(frag_areas[1].height),
+                     .xscale_2 = (enum a7xx_bin_scale)util_logbase2(frag_areas[2].width),
+                     .yscale_2 = (enum a7xx_bin_scale)util_logbase2(frag_areas[2].height),
+                     .xscale_3 = (enum a7xx_bin_scale)util_logbase2(frag_areas[3].width),
+                     .yscale_3 = (enum a7xx_bin_scale)util_logbase2(frag_areas[3].height),
+                     .xscale_4 = (enum a7xx_bin_scale)util_logbase2(frag_areas[4].width),
+                     .yscale_4 = (enum a7xx_bin_scale)util_logbase2(frag_areas[4].height),
+                     .xscale_5 = (enum a7xx_bin_scale)util_logbase2(frag_areas[5].width),
+                     .yscale_5 = (enum a7xx_bin_scale)util_logbase2(frag_areas[5].height)))
+               .add(GRAS_BIN_FOVEAT_OFFSET_0(CHIP,
+                     .xoffset_0 = frag_offsets[0].x,
+                     .xoffset_1 = frag_offsets[1].x,
+                     .xoffset_2 = frag_offsets[2].x))
+               .add(GRAS_BIN_FOVEAT_OFFSET_1(CHIP,
+                     .xoffset_3 = frag_offsets[3].x,
+                     .xoffset_4 = frag_offsets[4].x,
+                     .xoffset_5 = frag_offsets[5].x))
+               .add(GRAS_BIN_FOVEAT_OFFSET_2(CHIP,
+                     .yoffset_0 = frag_offsets[0].y,
+                     .yoffset_1 = frag_offsets[1].y,
+                     .yoffset_2 = frag_offsets[2].y))
+               .add(GRAS_BIN_FOVEAT_OFFSET_3(CHIP,
+                     .yoffset_3 = frag_offsets[3].y,
+                     .yoffset_4 = frag_offsets[4].y,
+                     .yoffset_5 = frag_offsets[5].y))
+               .add(RB_BIN_FOVEAT(CHIP,
+                     .binscaleen = bin_scale_en));
+            }
 
-            tu_cs_emit_regs(cs, RB_BIN_FOVEAT(CHIP,
-                  .binscaleen = bin_scale_en));
          } else {
             tu_cs_emit_regs(cs, GRAS_BIN_FOVEAT(CHIP));
             tu_cs_emit_regs(cs, RB_BIN_FOVEAT(CHIP));
