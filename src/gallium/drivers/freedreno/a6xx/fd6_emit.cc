@@ -996,11 +996,12 @@ fd6_emit_static_context_regs(struct fd_context *ctx, fd_cs &cs)
       crb.add(VPC_UNKNOWN_9210(CHIP));
    }
 
-   crb.add(A6XX_TPL1_MODE_CNTL(
+   crb.add(TPL1_MODE_CNTL(CHIP,
          .isammode = ISAMMODE_GL,
          .texcoordroundmode = COORD_TRUNCATE,
          .nearestmipsnap = CLAMP_ROUND_TRUNCATE,
          .destdatatypeoverride = true,
+         .clamp_disable = true,
    ));
 
    crb.add(SP_REG_PROG_ID_3(
