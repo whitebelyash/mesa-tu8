@@ -314,7 +314,6 @@ emit_blit_setup(fd_ncrb<CHIP> &ncrb, enum pipe_format pfmt,
    if (CHIP >= A7XX) {
       ncrb.add(TPL1_A2D_BLT_CNTL(CHIP,
          .raw_copy = false,
-         .start_offset_texels = 0,
          .type = A6XX_TEX_2D,
       ));
    }

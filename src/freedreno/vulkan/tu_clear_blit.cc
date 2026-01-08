@@ -507,7 +507,6 @@ r2d_setup_common(struct tu_cmd_buffer *cmd,
 
    if (CHIP > A6XX) {
       tu_cs_emit_regs(cs, TPL1_A2D_BLT_CNTL(CHIP, .raw_copy = false,
-                                                .start_offset_texels = 0,
                                                 .type = A6XX_TEX_2D));
    }
 
