@@ -152,6 +152,8 @@ xsi:schemaLocation="https://gitlab.freedesktop.org/freedreno/ rules-fd.xsd">
 	<!-- TODO: deal with name conflicts with other gens -->
 	<value name="CACHE_FLUSH7" value="0x32" variants="A7XX-"/>
 	<value name="CACHE_INVALIDATE7" value="0x33" variants="A7XX-"/>
+	<value name="SUBPASS_FENCE" value="0x35" variants="A7XX-"/>
+	<value name="SUBPASS_SLICE_FENCE" value="0x36" variants="A8XX-"/>
 	<value name="DEPTH_BUFFER_FLIP" value="0x3d" variants="A8XX-"/>
 	<value name="CCH_FAST_CLEAR_CLEAN" value="0x1b" variants="A8XX-"/>
 </enum>
