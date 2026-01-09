@@ -1457,6 +1457,8 @@ a8xx_gen1 = GPUProps(
         gmem_ccu_depth_cache_fraction = CCUColorCacheFraction.FULL.value,
         gmem_per_ccu_depth_cache_size = 127 * 1024,
         has_fs_tex_prefetch = False,
+        # See Gen 2 props
+        has_attachment_shading_rate = False, 
 )
 
 a8xx_gen2 = GPUProps(
