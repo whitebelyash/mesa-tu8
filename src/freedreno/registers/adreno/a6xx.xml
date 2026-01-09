@@ -1569,17 +1569,18 @@ by a particular renderpass/blit.
 			TODO: what about gen2 (a640)?
 		-->
 		<bitfield name="MULTIVIEW_ENABLE" pos="17" type="boolean"/>
-		<bitfield name="RENDERTARGETINDEXINCR" pos="18" type="boolean" variants="A6XX-A7XX"/>
-		<bitfield name="VIEWPORTINDEXINCR" pos="19" type="boolean" variants="A6XX-A7XX"/>
-		<bitfield name="UNK20" low="20" high="22" variants="A6XX-A7XX"/>
 	</bitset>
-	<reg32 offset="0x8090" name="GRAS_SU_CNTL" type="a6xx_gras_su_cntl" variants="A6XX-A7XX" usage="rp_blit"/>
+	<reg32 offset="0x8090" name="GRAS_SU_CNTL" type="a6xx_gras_su_cntl" variants="A6XX-A7XX" usage="rp_blit">
+		<bitfield name="RENDERTARGETINDEXINCR" pos="18" type="boolean"/>
+		<bitfield name="VIEWPORTINDEXINCR" pos="19" type="boolean"/>
+		<bitfield name="UNK20" low="20" high="22"/>
+	</reg32>
 	<reg32 offset="0x8209" name="GRAS_SU_CNTL" type="a6xx_gras_su_cntl" variants="A8XX-" usage="rp_blit"/>
 
 	<!-- Fields moved from GRAS_SU_CNTL on earlier gens: -->
 	<reg32 offset="0x820c" name="GRAS_SU_STEREO_CNTL" variants="A8XX-" usage="rp_blit">
-		<bitfield name="RENDERTARGETINDEXINCR" pos="18" type="boolean"/>
-		<bitfield name="VIEWPORTINDEXINCR" pos="19" type="boolean"/>
+		<bitfield name="RENDERTARGETINDEXINCR" pos="0" type="boolean"/>
+		<bitfield name="VIEWPORTINDEXINCR" pos="1" type="boolean"/>
 	</reg32>
 
 	<bitset name="a6xx_gras_su_point_minmax" inline="yes">
