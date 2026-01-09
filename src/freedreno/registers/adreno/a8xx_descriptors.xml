@@ -112,7 +112,7 @@ xsi:schemaLocation="https://gitlab.freedesktop.org/freedreno/ rules-fd.xsd">
 		<bitfield name="MIN_LOD_CLAMP" low="19" high="30" type="ufixed" radix="8"/>
 		<!-- For multiplanar, this overlaps other fields: -->
 		<bitfield name="BASE_V_HI" low="0" high="16"/>
-		<bitfield name="UV_PITCH" low="17" high="26"/> <!-- PLANE_PITCH -->
+		<bitfield name="UV_PITCH" shr="6" low="17" high="26"/> <!-- PLANE_PITCH -->
 	</reg32>
 	<reg32 offset="10" name="10"/>
 	<reg32 offset="11" name="11"/>
