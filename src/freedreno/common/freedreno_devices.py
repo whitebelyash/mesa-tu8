@@ -1571,8 +1571,8 @@ add_gpus([
     ], A6xxGPUInfo(
         CHIP.A8XX,
         [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen1],
-        num_ccu = 6,
-        num_slices = 3,
+        num_ccu = 4,
+        num_slices = 2,
         tile_align_w = 64,
         tile_align_h = 32,
         tile_max_w = 16384,
