@@ -1461,6 +1461,12 @@ a8xx_gen1 = GPUProps(
         has_attachment_shading_rate = False, 
 )
 
+# adreno_gen8_6_0 config (FD825). Not sure if this works
+a8xx_825 = GPUProps(
+        sysmem_ccu_depth_cache_fraction = CCUColorCacheFraction.THREE_QUARTER.value,
+        sysmem_per_ccu_depth_cache_size = 96 * 1024, # ??????
+        )
+
 a8xx_gen2 = GPUProps(
         reg_size_vec4 = 128,
         sysmem_vpc_attr_buf_size = 131072,
@@ -1546,12 +1552,15 @@ add_gpus([
         raw_magic_regs = a8xx_gen2_raw_magic_regs,
     ))
 
+
+
+
 # Completely experimental, added blindly
 add_gpus([
         GPUId(chip_id=0x44030000, name="FD825"),
     ], A6xxGPUInfo(
         CHIP.A8XX,
-        [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen1],
+        [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen1, a8xx_825],
         num_ccu = 4,
         num_slices = 2,
         tile_align_w = 64,
