@@ -1351,6 +1351,13 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
       cmd->state.rp.gmem_disable_reason = "TU_DEBUG(SYSMEM)";
       return true;
    }
+   
+   /* TODO: improve the check */
+   uint64_t chip_id = cmd->device->physical_device->dev_id.chip_id;
+   if (chip_id == 0x44050000 || chip_id == 0x44050001) {
+      cmd->state.rp.gmem_disable_reason = "Unsupported GPU";
+      return true;
+   }
 
    /* can't fit attachments into gmem */
    if (!cmd->state.tiling->possible) {
