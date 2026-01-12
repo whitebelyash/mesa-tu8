@@ -1467,6 +1467,12 @@ a8xx_825 = GPUProps(
         sysmem_per_ccu_depth_cache_size = 96 * 1024, # ??????
         )
 
+# adreno_gen8_3_0
+a8xx_810 = GPUProps(
+        sysmem_ccu_depth_cache_fraction = CCUColorCacheFraction.THREE_QUARTER.value,
+        sysmem_per_ccu_depth_cache_size = 96 * 1024, # ??????
+        )
+
 a8xx_gen2 = GPUProps(
         reg_size_vec4 = 128,
         sysmem_vpc_attr_buf_size = 131072,
@@ -1575,15 +1581,15 @@ add_gpus([
     ))
 
 # From what I seen, 810 might be an underclocked variant of 825. Still not sure if this works, CU/slice count might be lower again as well as the cache sizes.
-# There's some variant of A8XX GPU in KGSL which has only single slice, but I'm not sure if it's exactly 810.
-# TODO: check if mentioned single-slice GPU is actually a 810
+# There's some variant of A8XX GPU in KGSL which has only single slice, but I'm not sure if it's exactly 810
+# gen8_3_0 to be exact
 add_gpus([
         GPUId(chip_id=0x44010000, name="FD810"), # kgsl
     ], A6xxGPUInfo(
         CHIP.A8XX,
-        [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen1, a8xx_825],
-        num_ccu = 4,
-        num_slices = 2,
+        [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen1, a8xx_810],
+        num_ccu = 2,
+        num_slices = 1,
         tile_align_w = 64,
         tile_align_h = 32,
         tile_max_w = 16384,
