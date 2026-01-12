@@ -1553,11 +1553,32 @@ add_gpus([
     ))
 
 
-
-
 # Completely experimental, added blindly
 add_gpus([
         GPUId(chip_id=0x44030000, name="FD825"),
+    ], A6xxGPUInfo(
+        CHIP.A8XX,
+        [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen1, a8xx_825],
+        num_ccu = 4,
+        num_slices = 2,
+        tile_align_w = 64,
+        tile_align_h = 32,
+        tile_max_w = 16384,
+        tile_max_h = 16384,
+        num_vsc_pipes = 32,
+        cs_shared_mem_size = 32 * 1024,
+        wave_granularity = 2,
+        fibers_per_sp = 128 * 2 * 16,
+        magic_regs = dict(
+        ),
+        raw_magic_regs = a8xx_gen2_raw_magic_regs,
+    ))
+
+# From what I seen, 810 might be an underclocked variant of 825. Still not sure if this works, CU/slice count might be lower again as well as the cache sizes.
+# There's some variant of A8XX GPU in KGSL which has only single slice, but I'm not sure if it's exactly 810.
+# TODO: check if mentioned single-slice GPU is actually a 810
+add_gpus([
+        GPUId(chip_id=0x44010000, name="FD810"), # kgsl
     ], A6xxGPUInfo(
         CHIP.A8XX,
         [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen1, a8xx_825],
@@ -1583,6 +1604,29 @@ add_gpus([
         [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen2],
         num_ccu = 6,
         num_slices = 3,
+        tile_align_w = 96,
+        tile_align_h = 32,
+        tile_max_w = 16416,
+        tile_max_h = 16384,
+        num_vsc_pipes = 32,
+        cs_shared_mem_size = 32 * 1024,
+        wave_granularity = 2,
+        fibers_per_sp = 128 * 2 * 16,
+        magic_regs = dict(),
+        raw_magic_regs = a8xx_gen2_raw_magic_regs,
+    ))
+
+# I'm pretty sure 829 is a 8xx_gen2 GPU - according to the web it's a binned down variant of 840
+# It may have less CU/slices than 840 thus sysmem could be broken due to cache sizes - pretty much A825 in A8XX_gen1 (not sure if it's really gen1 though)
+# Change depth cache size if nothing is rendering properly on sysmem
+add_gpus([
+        GPUId(chip_id=0x44030A00, name="FD829"), # kgsl id???
+        GPUId(chip_id=0xffff44030A00, name="FD829"),
+    ], A6xxGPUInfo(
+        CHIP.A8XX,
+        [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen2],
+        num_ccu = 4,
+        num_slices = 2,
         tile_align_w = 96,
         tile_align_h = 32,
         tile_max_w = 16416,
