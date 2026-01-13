@@ -1501,7 +1501,7 @@ ir3_nir_lower_variant(struct ir3_shader_variant *so,
    if (so->compiler->gen >= 6)
       progress |= OPT(s, nir_lower_ubo_vec4);
 
-   progress |= OPT(s, ir3_nir_lower_io_offsets);
+   progress |= OPT(s, ir3_nir_lower_io_offsets, so->compiler);
 
    if (!so->binning_pass) {
       ir3_const_alloc_all_reserved_space(&ir3_const_state_mut(so)->allocs);

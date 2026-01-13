@@ -159,7 +159,8 @@ scalarize_load(nir_intrinsic_instr *intrinsic, nir_builder *b)
 
 static bool
 lower_offset_for_ssbo(nir_intrinsic_instr *intrinsic, nir_builder *b,
-                      unsigned ir3_ssbo_opcode, uint8_t offset_src_idx)
+                      unsigned ir3_ssbo_opcode, uint8_t offset_src_idx,
+                      struct ir3_compiler *c)
 {
    unsigned num_srcs = nir_intrinsic_infos[intrinsic->intrinsic].num_srcs;
    int shift = 2;
@@ -179,7 +180,11 @@ lower_offset_for_ssbo(nir_intrinsic_instr *intrinsic, nir_builder *b,
 
    if ((has_dest && intrinsic->def.bit_size == 64) ||
        (!has_dest && intrinsic->src[0].ssa->bit_size == 64)) {
-      shift = 1;
+      /* a7xx quirk, 64b atomics against a 16b raw buffer have offset
+       * in units of 16b instead of dword:
+       */
+      if (c->gen == 7)
+         shift = 1;
    }
 
    /* Here we create a new intrinsic and copy over all contents from the old
@@ -254,7 +259,8 @@ lower_offset_for_ssbo(nir_intrinsic_instr *intrinsic, nir_builder *b,
 }
 
 static bool
-lower_io_offsets_block(nir_block *block, nir_builder *b, void *mem_ctx)
+lower_io_offsets_block(nir_block *block, nir_builder *b, void *mem_ctx,
+                       struct ir3_compiler *c)
 {
    bool progress = false;
 
@@ -271,7 +277,7 @@ lower_io_offsets_block(nir_block *block, nir_builder *b, void *mem_ctx)
          get_ir3_intrinsic_for_ssbo_intrinsic(intr->intrinsic, &offset_src_idx);
       if (ir3_intrinsic != -1) {
          progress |= lower_offset_for_ssbo(intr, b, (unsigned)ir3_intrinsic,
-                                           offset_src_idx);
+                                           offset_src_idx, c);
       }
 
       if (intr->intrinsic == nir_intrinsic_load_uav_ir3 &&
@@ -288,27 +294,27 @@ lower_io_offsets_block(nir_block *block, nir_builder *b, void *mem_ctx)
 }
 
 static bool
-lower_io_offsets_func(nir_function_impl *impl)
+lower_io_offsets_func(nir_function_impl *impl, struct ir3_compiler *c)
 {
    void *mem_ctx = ralloc_parent(impl);
    nir_builder b = nir_builder_create(impl);
 
    bool progress = false;
    nir_foreach_block_safe (block, impl) {
-      progress |= lower_io_offsets_block(block, &b, mem_ctx);
+      progress |= lower_io_offsets_block(block, &b, mem_ctx, c);
    }
 
    return nir_progress(progress, impl, nir_metadata_control_flow);
 }
 
 bool
-ir3_nir_lower_io_offsets(nir_shader *shader)
+ir3_nir_lower_io_offsets(nir_shader *shader, struct ir3_compiler *c)
 {
    bool progress = false;
 
    nir_foreach_function (function, shader) {
       if (function->impl)
-         progress |= lower_io_offsets_func(function->impl);
+         progress |= lower_io_offsets_func(function->impl, c);
    }
 
    return progress;
