@@ -411,8 +411,8 @@ struct fd_dev_info {
       /* Whether the (eolm) and (eogm) nop flags are supported. */
       bool has_eolm_eogm;
 
-      /* Does the GPU support GMEM */
-      bool has_gmem;
+      /* Does the GPU needs to disable GMEM */
+      bool disable_gmem;
    } props;
 };
 

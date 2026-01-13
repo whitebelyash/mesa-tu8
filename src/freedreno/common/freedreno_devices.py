@@ -1438,7 +1438,6 @@ a8xx_base = GPUProps(
         reg_size_vec4 = 96,
         has_rt_workaround = False,
         supports_double_threadsize = False,
-        has_gmem = True, # this needs to be added to every gpu generation, however, these patches target only a8xx thus it's not really useful
     )
 
 a8xx_gen1 = GPUProps(
@@ -1460,7 +1459,7 @@ a8xx_gen1 = GPUProps(
         has_fs_tex_prefetch = False,
         # See Gen 2 props
         has_attachment_shading_rate = False,
-        has_gmem = False,
+        disable_gmem = True,
 )
 
 # adreno_gen8_6_0 config (FD825). Not sure if this works
