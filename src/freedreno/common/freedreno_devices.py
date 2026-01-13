@@ -1459,6 +1459,7 @@ a8xx_gen1 = GPUProps(
         has_fs_tex_prefetch = False,
         # See Gen 2 props
         has_attachment_shading_rate = False,
+        has_primitive_shading_rate = False,
         disable_gmem = True,
 )
 
