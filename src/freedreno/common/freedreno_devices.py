@@ -1590,7 +1590,7 @@ add_gpus([
     ], A6xxGPUInfo(
         CHIP.A8XX,
         [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen1, a8xx_810],
-        num_ccu = 2,
+        num_ccu = 1,
         num_slices = 1,
         tile_align_w = 64,
         tile_align_h = 32,
@@ -1600,6 +1600,7 @@ add_gpus([
         cs_shared_mem_size = 32 * 1024,
         wave_granularity = 2,
         fibers_per_sp = 128 * 2 * 16,
+        highest_bank_bit = 15, # kgsl
         magic_regs = dict(
         ),
         raw_magic_regs = a8xx_gen2_raw_magic_regs,
