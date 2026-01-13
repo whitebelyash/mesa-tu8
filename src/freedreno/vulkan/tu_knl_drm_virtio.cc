@@ -1317,6 +1317,9 @@ tu_knl_drm_virtio_load(struct tu_instance *instance,
    device->instance = instance;
    device->local_fd = fd;
 
+   if (TU_DEBUG(STARTUP))
+      mesa_logi("Got chip_id: 0x%016" PRIx64, caps.u.msm.chip_id);
+
    device->dev_id.gpu_id  = caps.u.msm.gpu_id;
    device->dev_id.chip_id = caps.u.msm.chip_id;
    device->gmem_size      = caps.u.msm.gmem_size;

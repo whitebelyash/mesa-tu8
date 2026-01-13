@@ -1643,6 +1643,9 @@ tu_knl_drm_msm_load(struct tu_instance *instance,
       goto fail;
    }
 
+   if (TU_DEBUG(STARTUP))
+      mesa_logi("Got chip_id: 0x%016" PRIx64, device->dev_id.chip_id);
+
    if (tu_drm_get_gmem_size(device, &device->gmem_size)) {
       result = vk_startup_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
                                 "could not get GMEM size");

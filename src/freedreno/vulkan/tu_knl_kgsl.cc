@@ -1778,6 +1778,9 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
    device->local_fd = fd;
    device->kgsl_dma_fd = dma_fd;
 
+   if (TU_DEBUG(STARTUP))
+      mesa_logi("Got chip_id: 0x%08x", info.chip_id);
+
    device->dev_id.gpu_id =
       ((info.chip_id >> 24) & 0xff) * 100 +
       ((info.chip_id >> 16) & 0xff) * 10 +
@@ -1789,7 +1792,7 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
    device->has_raytracing = tu_kgsl_get_raytracing(fd);
 
    device->submitqueue_priority_count = 1;
-   
+
    device->timeline_type = vk_sync_timeline_get_type(&vk_kgsl_sync_type);
 
    device->sync_types[0] = &vk_kgsl_sync_type;
