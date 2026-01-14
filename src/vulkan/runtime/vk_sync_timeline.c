@@ -507,53 +507,49 @@ vk_sync_timeline_wait_locked(struct vk_device *device,
                              enum vk_sync_wait_flags wait_flags,
                              uint64_t abs_timeout_ns)
 {
-   struct timespec abs_timeout_ts;
-   timespec_from_nsec(&abs_timeout_ts, abs_timeout_ns);
+    struct timespec abs_timeout_ts;
+    timespec_from_nsec(&abs_timeout_ts, abs_timeout_ns);
 
-   /* Wait on the queue_submit condition variable until the timeline has a
-    * time point pending that's at least as high as wait_value.
-    */
-   while (state->highest_pending < wait_value) {
-      int ret = u_cnd_monotonic_timedwait(&state->cond, &state->mutex,
-                                          &abs_timeout_ts);
-      if (ret == thrd_timedout)
-         return VK_TIMEOUT;
+    /* Wait until the timeline reaches the requested value */
+    while (state->highest_past < wait_value) {
+        struct vk_sync_timeline_point *point = NULL;
 
-      if (ret != thrd_success)
-         return vk_errorf(device, VK_ERROR_UNKNOWN, "cnd_timedwait failed");
-   }
+        /* Get the first pending point >= wait_value */
+        list_for_each_entry(struct vk_sync_timeline_point, p,
+                            &state->pending_points, link) {
+            if (p->value >= wait_value) {
+                vk_sync_timeline_ref_point_locked(p);
+                point = p;
+                break;
+            }
+        }
 
-   if (wait_flags & VK_SYNC_WAIT_PENDING)
-      return VK_SUCCESS;
+        if (!point) {
+            /* Nothing pending, just wait on condition variable */
+            int ret = u_cnd_monotonic_timedwait(&state->cond, &state->mutex, &abs_timeout_ts);
+            if (ret == thrd_timedout)
+                return VK_TIMEOUT;
+            if (ret != thrd_success)
+                return vk_errorf(device, VK_ERROR_UNKNOWN, "cnd_timedwait failed");
+            continue;
+        }
 
-   VkResult result = vk_sync_timeline_gc_locked(device, state, false);
-   if (result != VK_SUCCESS)
-      return result;
+        /* Unlock while waiting on this specific timeline point */
+        mtx_unlock(&state->mutex);
+        VkResult r = vk_sync_wait(device, &point->sync, 0, VK_SYNC_WAIT_COMPLETE, abs_timeout_ns);
+        mtx_lock(&state->mutex);
 
-   while (state->highest_past < wait_value) {
-      struct vk_sync_timeline_point *point = vk_sync_timeline_first_point(state);
+        vk_sync_timeline_unref_point_locked(device, state, point);
 
-      /* Drop the lock while we wait. */
-      vk_sync_timeline_ref_point_locked(point);
-      mtx_unlock(&state->mutex);
+        if (r != VK_SUCCESS)
+            return r;
 
-      result = vk_sync_wait(device, &point->sync, 0,
-                            VK_SYNC_WAIT_COMPLETE,
-                            abs_timeout_ns);
+        vk_sync_timeline_complete_point_locked(device, state, point);
+    }
 
-      /* Pick the mutex back up */
-      mtx_lock(&state->mutex);
-      vk_sync_timeline_unref_point_locked(device, state, point);
-
-      /* This covers both VK_TIMEOUT and VK_ERROR_DEVICE_LOST */
-      if (result != VK_SUCCESS)
-         return result;
-
-      vk_sync_timeline_complete_point_locked(device, state, point);
-   }
-
-   return VK_SUCCESS;
+    return VK_SUCCESS;
 }
+
 
 static VkResult
 vk_sync_timeline_wait(struct vk_device *device,
