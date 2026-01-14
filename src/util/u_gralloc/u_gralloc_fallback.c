@@ -149,12 +149,12 @@ fallback_gralloc_get_buffer_info(struct u_gralloc *gralloc,
 
 #ifdef HAS_FREEDRENO
    uint32_t gmsm = ('g' << 24) | ('m' << 16) | ('s' << 8) | 'm';
+   /* TODO: find another way of detecting if the buffer was allocated by qcom
+    * gralloc */
  //  if (hnd->handle->numInts >= 2 && hnd->handle->data[hnd->handle->numFds] == gmsm) {
-   if (true) {
-      /* This UBWC flag was introduced in a5xx. */
-      bool ubwc = hnd->handle->data[hnd->handle->numFds + 1] & 0x08000000;
-      out->modifier = ubwc ? DRM_FORMAT_MOD_QCOM_COMPRESSED : DRM_FORMAT_MOD_LINEAR;
-   }
+   /* This UBWC flag was introduced in a5xx. */
+   bool ubwc = hnd->handle->data[hnd->handle->numFds + 1] & 0x08000000;
+   out->modifier = ubwc ? DRM_FORMAT_MOD_QCOM_COMPRESSED : DRM_FORMAT_MOD_LINEAR;
 #endif
 
    return 0;
