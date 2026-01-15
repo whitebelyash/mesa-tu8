@@ -344,8 +344,9 @@ tu6_emit_flushes(struct tu_cmd_buffer *cmd_buffer,
       ));
    }
    if (CHIP >= A7XX && flushes & TU_CMD_FLAG_BLIT_CACHE_CLEAN)
-      /* On A7XX, blit cache flushes are required to ensure blit writes are visible
+      /* On A7XX/A8XX, blit cache flushes are required to ensure blit writes are visible
        * via UCHE. This isn't necessary on A6XX, all writes should be visible implictly.
+       * On A8XX, we can optimize by only flushing when actually needed.
        */
       tu_emit_event_write<CHIP>(cmd_buffer, cs, FD_CCU_CLEAN_BLIT_CACHE);
    if (CHIP >= A7XX && (flushes & TU_CMD_FLAG_CCHE_INVALIDATE) &&

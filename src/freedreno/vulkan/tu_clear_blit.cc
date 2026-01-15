@@ -479,7 +479,10 @@ r2d_setup_common(struct tu_cmd_buffer *cmd,
    uint32_t unknown_8c01 = 0;
 
    /* note: the only format with partial clearing is D24S8 */
-   if (dst_format == PIPE_FORMAT_Z24_UNORM_S8_UINT) {
+   /* On A7XX and A8XX, this register should always be 0 to avoid artifacts.
+    * Only A6XX and older GPUs need special handling for partial clears.
+    */
+   if (dst_format == PIPE_FORMAT_Z24_UNORM_S8_UINT && CHIP < A7XX) {
       /* preserve stencil channel */
       if (aspect_mask == VK_IMAGE_ASPECT_DEPTH_BIT)
          unknown_8c01 = 0x08000041;
