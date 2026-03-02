@@ -43,9 +43,10 @@ __calc_gmem_cache_offsets(const struct fd_dev_info *info, unsigned offset,
    unsigned num_ccu = info->num_ccu;
 
    /* This seems not to be load bearing, but keeping it for now to match blob: */
-   if (info->chip >= 8)
+   /* @todo: re-enable */
+   /*if (info->chip >= 8)
       offset -= 0x78000;
-
+   */
    config->vpc_bv_pos_buf_offset = offset - (num_ccu * config->vpc_bv_pos_buf_size);
    offset = config->vpc_bv_pos_buf_offset;
 
