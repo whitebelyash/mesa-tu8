@@ -1476,7 +1476,7 @@ a8xx_base_raw_magic_regs = [
     ]
 
 a8xx_gen1 = GPUProps(
-        reg_size_vec4 = 128,
+        reg_size_vec4 = 96,
         sysmem_vpc_attr_buf_size = 131072,
         sysmem_vpc_pos_buf_size = 65536,
         sysmem_vpc_bv_pos_buf_size = 32768,
