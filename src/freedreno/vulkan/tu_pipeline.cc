@@ -40,6 +40,53 @@ emit_load_state(struct tu_cs *cs, unsigned opcode, enum a6xx_state_type st,
                 enum a6xx_state_block sb, unsigned base, unsigned offset,
                 unsigned count)
 {
+struct tu_device *dev = cs->device;
+   uint32_t chip_id = dev->physical_device->info->chip_id;
+   
+   /* A810  имеет узкую шину памяти (25-17 ГБ/с)
+    * A829  имеет более быструю шину, но страдает от переполнения очередей
+    */
+   bool is_a8xx = (chip_id >= 0x08010000);
+   
+   /* Динамический лимит: 
+    * - Для 8-й серии используем 256 юнитов (предотвращает пробки)
+    * - Для остальных — 1024 (максимальная производительность)
+    */
+   uint32_t max_units = is_a8xx ? 256 : 1024;
+   uint32_t unit_count = MIN2(count, max_units - 1);
+   
+   /* Для больших пакетов на 8-й серии разбиваем на несколько итераций
+    * Это даёт памяти время на освобождение (Flow Control)
+    */
+   uint32_t remaining = count;
+   uint32_t current_offset = offset;
+   
+   do {
+      uint32_t chunk_units = MIN2(remaining, max_units - 1);
+      
+      tu_cs_emit_pkt7(cs, opcode, 3);
+      tu_cs_emit(cs,
+                 CP_LOAD_STATE6_0_STATE_TYPE(st) |
+                 CP_LOAD_STATE6_0_STATE_SRC(SS6_BINDLESS) |
+                 CP_LOAD_STATE6_0_STATE_BLOCK(sb) |
+                 CP_LOAD_STATE6_0_NUM_UNIT(chunk_units));
+      tu_cs_emit_qw(cs, current_offset | (base << 28));
+      
+      remaining -= chunk_units;
+      current_offset += chunk_units * FDL6_TEX_CONST_DWORDS * 4;
+      
+      
+      if (is_a8xx && chunk_units > 128 && remaining > 0) {
+         tu_cs_emit_pkt7(cs, CP_WAIT_REG_MEM, 6);
+         tu_cs_emit(cs, 0x03); /* equal */
+         tu_cs_emit(cs, 0x00000000);
+         tu_cs_emit(cs, 0x00000000);
+         tu_cs_emit(cs, 0x00000001);
+         tu_cs_emit(cs, 0x00000000);
+         tu_cs_emit(cs, 0x00000000);
+      }
+   } while (remaining > 0);
+}
    /* Note: just emit one packet, even if count overflows NUM_UNIT. It's not
     * clear if emitting more packets will even help anything. Presumably the
     * descriptor cache is relatively small, and these packets stop doing
