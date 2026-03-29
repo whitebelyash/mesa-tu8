@@ -40,13 +40,11 @@ emit_load_state(struct tu_cs *cs, unsigned opcode, enum a6xx_state_type st,
                 enum a6xx_state_block sb, unsigned base, unsigned offset,
                 unsigned count)
 {
-   
+   /* Используем gpu_id для надежности */
    uint32_t gpu_id = cs->device->physical_device->dev_id.gpu_id;
    bool is_a8xx = (gpu_id == 810 || gpu_id == 829);
    
-   
    uint32_t max_units = is_a8xx ? 256 : 1024;
-   
    uint32_t remaining = count;
    uint32_t current_offset = offset;
    
