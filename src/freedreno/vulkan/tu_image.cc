@@ -590,6 +590,14 @@ tu_image_update_layout(struct tu_device *device, struct tu_image *image,
          return vk_error(device, VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT);
       }
 
+      /* ========== A829: ХАК ДЛЯ КОРРЕКТНОГО ВЫРАВНИВАНИЯ В РЕЖИМЕ SYSMEM ========== */
+      if (device->physical_device->dev_id.gpu_id == 829 && 
+          image->vk.tiling == VK_IMAGE_TILING_LINEAR) {
+         uint32_t old_pitch = layout->pitch0;
+         layout->pitch0 = align(old_pitch, 128);
+      }
+      /* ========== КОНЕЦ ХАКА A829 ========== */
+
       if (TU_DEBUG(LAYOUT))
          fdl_dump_layout(layout);
 
@@ -725,6 +733,15 @@ tu_image_init(struct tu_device *device, struct tu_image *image,
        image->vk.extent.width < 16) {
       image->force_linear_tile = true;
    }
+
+   /* ========== A829: ОПТИМИЗАЦИЯ ДЛЯ SYSMEM ========== */
+   if (device->physical_device->dev_id.gpu_id == 829 &&
+       pCreateInfo->imageType == VK_IMAGE_TYPE_2D &&
+       !(pCreateInfo->usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT) &&
+       !(pCreateInfo->usage & VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT)) {
+      image->force_linear_tile = false;
+   }
+   /* ========== КОНЕЦ БЛОКА A829 ========== */
 
    if (image->force_linear_tile ||
        !ubwc_possible(device, image->vk.format, pCreateInfo->imageType,
@@ -1635,4 +1652,3 @@ tu_bind_sparse_image(struct tu_device *device, void *submit,
                          prev_bo_offset, bind_range);
    }
 }
-
