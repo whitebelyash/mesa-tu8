@@ -10,12 +10,14 @@
 #include "tu_suballoc.h"
 
 /* There is a limit to IB size supported by HW,
- * which appears to be 0x0fffff.
+ * which appears to be 0x0fffff. A810/A829 может больше.
  */
 inline uint32_t
 tu_sanitize_ib_size(uint32_t size)
 {
-   return MIN2(size, 0x0fffff);
+   /* A810/A829 могут обрабатывать большие буферы */
+   /* 0x1fffff = ~2M двойных слов = 8MB */
+   return MIN2(size, 0x1fffff);
 }
 
 /**
@@ -163,6 +165,20 @@ tu_cs_add_bo(struct tu_cs *cs, uint32_t size)
    }
 
    struct tu_bo *new_bo;
+
+   /* ========== ВЫРАВНИВАНИЕ ДЛЯ ADRENO 810/829 ========== */
+   if (cs->device->physical_device->dev_id.gpu_id == 810 ||
+       cs->device->physical_device->dev_id.gpu_id == 829) {
+      /* Для больших буферов просим выравнивание по 64KB */
+      if (size > 4096) {
+         size = align(size, 64 * 1024 / sizeof(uint32_t));
+      }
+      /* Для очень больших буферов используем 1MB выравнивание */
+      if (size > 256 * 1024) {
+         size = align(size, 1024 * 1024 / sizeof(uint32_t));
+      }
+   }
+   /* ========== КОНЕЦ ========== */
 
    VkResult result =
       tu_bo_init_new(cs->device, NULL, &new_bo, size * sizeof(uint32_t),
@@ -481,6 +497,22 @@ tu_cs_reserve_space(struct tu_cs *cs, uint32_t reserved_size)
 
       /* Double the size for the next bo. */
       new_size = tu_sanitize_ib_size(new_size << 1);
+
+      /* ========== ОПТИМИЗАЦИЯ ДЛЯ ADRENO 810/829 ========== */
+      if (cs->device->physical_device->dev_id.gpu_id == 810 ||
+          cs->device->physical_device->dev_id.gpu_id == 829) {
+         /* Более агрессивный рост для A8xx */
+         if (new_size < 64 * 1024) {
+            new_size = tu_sanitize_ib_size(new_size << 2);
+         } else if (new_size < 256 * 1024) {
+            new_size = tu_sanitize_ib_size(new_size * 3);
+         } else {
+            new_size = tu_sanitize_ib_size(new_size << 1);
+         }
+         new_size = MIN2(new_size, 1024 * 1024); /* 1MB максимум */
+      }
+      /* ========== КОНЕЦ ========== */
+
       if (cs->next_bo_size < new_size)
          cs->next_bo_size = new_size;
    }
