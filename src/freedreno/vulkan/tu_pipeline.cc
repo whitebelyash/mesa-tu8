@@ -34,65 +34,47 @@
 #include "tu_rmv.h"
 
 /* Emit IB that preloads the descriptors that the shader uses */
-
 static void
 emit_load_state(struct tu_cs *cs, unsigned opcode, enum a6xx_state_type st,
                 enum a6xx_state_block sb, unsigned base, unsigned offset,
                 unsigned count)
 {
-   /* Используем gpu_id, так как в fd_dev_info нет chip_id */
-   uint32_t gpu_id = cs->device->physical_device->dev_id.gpu_id;
-   bool is_a8xx = (gpu_id == 810 || gpu_id == 829);
-   
-   uint32_t max_units = is_a8xx ? 256 : 1024;
-   uint32_t remaining = count;
-   uint32_t current_offset = offset;
-   
-   do {
-      uint32_t chunk_units = MIN2(remaining, max_units - 1);
-      
-      tu_cs_emit_pkt7(cs, opcode, 3);
-      tu_cs_emit(cs,
-                 CP_LOAD_STATE6_0_STATE_TYPE(st) |
-                 CP_LOAD_STATE6_0_STATE_SRC(SS6_BINDLESS) |
-                 CP_LOAD_STATE6_0_STATE_BLOCK(sb) |
-                 CP_LOAD_STATE6_0_NUM_UNIT(chunk_units));
-      tu_cs_emit_qw(cs, current_offset | (base << 28));
-      
-      remaining -= chunk_units;
-      /* Смещение: 8 dwords (32 байта) на один юнит дескриптора */
-      current_offset += chunk_units * 8 * 4;
-      
-      /* Для A8xx добавляем барьер при больших объемах данных */
-      if (is_a8xx && chunk_units > 128 && remaining > 0) {
-         tu_cs_emit_pkt7(cs, CP_WAIT_REG_MEM, 6);
-         tu_cs_emit(cs, 0x03); /* equal */
-         tu_cs_emit(cs, 0x00000000);
-         tu_cs_emit(cs, 0x00000000);
-         tu_cs_emit(cs, 0x00000001);
-         tu_cs_emit(cs, 0x00000000);
-         tu_cs_emit(cs, 0x00000000);
+   struct tu_device *dev = cs->device;
+   uint32_t unit_count = MIN2(count, 1024 - 1);
+   bool is_a8xx = dev->physical_device->dev_id.gpu_id == 810 ||
+                  dev->physical_device->dev_id.gpu_id == 829;
+
+   tu_cs_emit_pkt7(cs, opcode, 3);
+   tu_cs_emit(cs,
+              CP_LOAD_STATE6_0_STATE_TYPE(st) |
+              CP_LOAD_STATE6_0_STATE_SRC(SS6_BINDLESS) |
+              CP_LOAD_STATE6_0_STATE_BLOCK(sb) |
+              CP_LOAD_STATE6_0_NUM_UNIT(unit_count));
+   tu_cs_emit_qw(cs, offset | (base << 28));
+
+   if (is_a8xx && sb == SB6_FS_TEX && unit_count > 16) {
+      if (dev->physical_device->dev_id.gpu_id == 810) {
+         if (unit_count > 64) {
+            tu_cs_emit_pkt7(cs, CP_WAIT_FOR_IDLE, 0);
+         } else if (unit_count > 32) {
+            tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
+            tu_cs_emit(cs, 0x0);
+         }
+      } else if (dev->physical_device->dev_id.gpu_id == 829) {
+         if (unit_count > 128) {
+            tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
+            tu_cs_emit(cs, 0x0);
+         }
       }
-   } while (remaining > 0);
+   }
 }
 
-   /* Note: just emit one packet, even if count overflows NUM_UNIT. It's not
-    * clear if emitting more packets will even help anything. Presumably the
-    * descriptor cache is relatively small, and these packets stop doing
-    * anything when there are too many descriptors.
-    */
-   
 static unsigned
 tu6_load_state_size(struct tu_pipeline *pipeline,
                     struct tu_pipeline_layout *layout)
 {
    const unsigned load_state_size = 4;
    unsigned size = 0;
-   
-   uint32_t gpu_id = pipeline->cs.device->physical_device->dev_id.gpu_id;
-   bool is_a8xx = (gpu_id == 810 || gpu_id == 829);
-   unsigned chunk_divider = is_a8xx ? 256 : 1024;
-
    for (unsigned i = 0; i < layout->num_sets; i++) {
       if (!(pipeline->active_desc_sets & (1u << i)))
          continue;
@@ -100,25 +82,21 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
       struct tu_descriptor_set_layout *set_layout = layout->set[i].layout;
       for (unsigned j = 0; j < set_layout->binding_count; j++) {
          struct tu_descriptor_set_binding_layout *binding = &set_layout->binding[j];
+         unsigned count = 0;
          VkShaderStageFlags stages = pipeline->active_stages & binding->shader_stages;
          unsigned stage_count = util_bitcount(stages);
 
          if (!binding->array_size)
             continue;
 
-         unsigned count = 0;
          switch (binding->type) {
          case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
          case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
          case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
          case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
          case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
-            if (stage_count) {
-               if (is_a8xx && (binding->array_size > chunk_divider))
-                  count = DIV_ROUND_UP(binding->array_size, chunk_divider);
-               else
-                  count = 1;
-            }
+            if (stage_count)
+               count += 1;
             break;
          case VK_DESCRIPTOR_TYPE_SAMPLER:
          case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
@@ -127,20 +105,17 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
          case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
          case VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM:
          case VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM:
-            if (is_a8xx && (binding->array_size > chunk_divider))
-               count = stage_count * DIV_ROUND_UP(binding->array_size, chunk_divider);
-            else
-               count = stage_count;
+            count = stage_count;
             break;
          case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-            /* Для комбинированных дескрипторов лимит в два раза меньше из-за их структуры */
-            if (is_a8xx && (binding->array_size > chunk_divider / 2))
-               count = stage_count * DIV_ROUND_UP(binding->array_size, chunk_divider / 2) * 2;
-            else
-               count = stage_count * binding->array_size * 2;
+            count = stage_count * binding->array_size * 2;
+            break;
+         case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+         case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK:
+         case VK_DESCRIPTOR_TYPE_MUTABLE_EXT:
             break;
          default:
-            continue;
+            UNREACHABLE("bad descriptor type");
          }
          size += count * load_state_size;
       }
@@ -148,9 +123,11 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
    return size;
 }
 
-
-
-
+   /* Note: just emit one packet, even if count overflows NUM_UNIT. It's not
+    * clear if emitting more packets will even help anything. Presumably the
+    * descriptor cache is relatively small, and these packets stop doing
+    * anything when there are too many descriptors.
+    */
 static void
 tu6_emit_load_state(struct tu_device *device,
                     struct tu_pipeline *pipeline,
