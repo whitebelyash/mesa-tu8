@@ -107,6 +107,62 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
 {
    const unsigned load_state_size = 4;
    unsigned size = 0;
+   struct tu_device *dev = pipeline->cs.device;
+   bool is_a8xx = (dev->physical_device->info->chip_id >= 0x08010000);
+   unsigned chunk_divider = is_a8xx ? 256 : 1024;
+   
+   for (unsigned i = 0; i < layout->num_sets; i++) {
+      if (!(pipeline->active_desc_sets & (1u << i)))
+         continue;
+
+      struct tu_descriptor_set_layout *set_layout = layout->set[i].layout;
+      for (unsigned j = 0; j < set_layout->binding_count; j++) {
+         struct tu_descriptor_set_binding_layout *binding = &set_layout->binding[j];
+         unsigned count = 0;
+         VkShaderStageFlags stages = pipeline->active_stages & binding->shader_stages;
+         unsigned stage_count = util_bitcount(stages);
+
+         if (!binding->array_size)
+            continue;
+
+         switch (binding->type) {
+         case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+         case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+         case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+         case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+         case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
+            if (stage_count) {
+               /* Учитываем разбиение на чанки для A8XX */
+               unsigned total = 1;
+               if (is_a8xx && (count * mul > chunk_divider))
+                  total = DIV_ROUND_UP(count * mul, chunk_divider);
+               count = total;
+            }
+            break;
+         case VK_DESCRIPTOR_TYPE_SAMPLER:
+         case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+         case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+         case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+         case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+            if (is_a8xx && (count > chunk_divider))
+               count = stage_count * DIV_ROUND_UP(count, chunk_divider);
+            else
+               count = stage_count;
+            break;
+         case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+            if (is_a8xx && (binding->array_size > chunk_divider / 2))
+               count = stage_count * DIV_ROUND_UP(binding->array_size, chunk_divider / 2) * 2;
+            else
+               count = stage_count * binding->array_size * 2;
+            break;
+         default:
+            continue;
+         }
+         size += count * load_state_size;
+      }
+   }
+   return size;
+}
    for (unsigned i = 0; i < layout->num_sets; i++) {
       if (!(pipeline->active_desc_sets & (1u << i)))
          continue;
