@@ -95,7 +95,6 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
    const unsigned load_state_size = 4;
    unsigned size = 0;
    
-   
    uint32_t gpu_id = pipeline->cs.device->physical_device->dev_id.gpu_id;
    bool is_a8xx = (gpu_id == 810 || gpu_id == 829);
    unsigned chunk_divider = is_a8xx ? 256 : 1024;
@@ -107,13 +106,13 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
       struct tu_descriptor_set_layout *set_layout = layout->set[i].layout;
       for (unsigned j = 0; j < set_layout->binding_count; j++) {
          struct tu_descriptor_set_binding_layout *binding = &set_layout->binding[j];
-         unsigned count = 0;
          VkShaderStageFlags stages = pipeline->active_stages & binding->shader_stages;
          unsigned stage_count = util_bitcount(stages);
 
          if (!binding->array_size)
             continue;
 
+         unsigned count = 0;
          switch (binding->type) {
          case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
          case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
@@ -121,8 +120,7 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
          case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
          case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
             if (stage_count) {
-               
-                  if (is_a8xx && (binding->array_size > chunk_divider))
+               if (is_a8xx && (binding->array_size > chunk_divider))
                   count = DIV_ROUND_UP(binding->array_size, chunk_divider);
                else
                   count = 1;
@@ -135,14 +133,12 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
          case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
          case VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM:
          case VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM:
-            
             if (is_a8xx && (binding->array_size > chunk_divider))
                count = stage_count * DIV_ROUND_UP(binding->array_size, chunk_divider);
             else
                count = stage_count;
             break;
          case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-            
             if (is_a8xx && (binding->array_size > chunk_divider / 2))
                count = stage_count * DIV_ROUND_UP(binding->array_size, chunk_divider / 2) * 2;
             else
@@ -156,6 +152,7 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
    }
    return size;
 }
+
 
 
 static void
