@@ -40,7 +40,7 @@ emit_load_state(struct tu_cs *cs, unsigned opcode, enum a6xx_state_type st,
                 enum a6xx_state_block sb, unsigned base, unsigned offset,
                 unsigned count)
 {
-   /* Используем gpu_id для надежности */
+   /* Используем gpu_id, так как в fd_dev_info нет chip_id */
    uint32_t gpu_id = cs->device->physical_device->dev_id.gpu_id;
    bool is_a8xx = (gpu_id == 810 || gpu_id == 829);
    
@@ -60,8 +60,10 @@ emit_load_state(struct tu_cs *cs, unsigned opcode, enum a6xx_state_type st,
       tu_cs_emit_qw(cs, current_offset | (base << 28));
       
       remaining -= chunk_units;
+      /* Смещение: 8 dwords (32 байта) на один юнит дескриптора */
       current_offset += chunk_units * 8 * 4;
       
+      /* Для A8xx добавляем барьер при больших объемах данных */
       if (is_a8xx && chunk_units > 128 && remaining > 0) {
          tu_cs_emit_pkt7(cs, CP_WAIT_REG_MEM, 6);
          tu_cs_emit(cs, 0x03); /* equal */
@@ -79,15 +81,7 @@ emit_load_state(struct tu_cs *cs, unsigned opcode, enum a6xx_state_type st,
     * descriptor cache is relatively small, and these packets stop doing
     * anything when there are too many descriptors.
     */
-   tu_cs_emit_pkt7(cs, opcode, 3);
-   tu_cs_emit(cs,
-              CP_LOAD_STATE6_0_STATE_TYPE(st) |
-              CP_LOAD_STATE6_0_STATE_SRC(SS6_BINDLESS) |
-              CP_LOAD_STATE6_0_STATE_BLOCK(sb) |
-              CP_LOAD_STATE6_0_NUM_UNIT(MIN2(count, 1024-1)));
-   tu_cs_emit_qw(cs, offset | (base << 28));
-}
-
+   
 static unsigned
 tu6_load_state_size(struct tu_pipeline *pipeline,
                     struct tu_pipeline_layout *layout)
@@ -139,6 +133,7 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
                count = stage_count;
             break;
          case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+            /* Для комбинированных дескрипторов лимит в два раза меньше из-за их структуры */
             if (is_a8xx && (binding->array_size > chunk_divider / 2))
                count = stage_count * DIV_ROUND_UP(binding->array_size, chunk_divider / 2) * 2;
             else
@@ -152,6 +147,7 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
    }
    return size;
 }
+
 
 
 
