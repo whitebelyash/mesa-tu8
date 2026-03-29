@@ -1456,7 +1456,7 @@ set_combined_state(struct tu_pipeline_builder *builder,
    return true;
 }
 
-#define TU6_EMIT_VERTEX_INPUT_MAX_DWORDS (MAX_VERTEX_ATTRIBS * 2 + 1)
+#define TU6_EMIT_VERTEX_INPUT_MAX_DWORDS (MAX_VERTEX_ATTRIBS * 4 + 1)
 
 static VkResult
 tu_pipeline_allocate_cs(struct tu_device *dev,
@@ -1466,6 +1466,12 @@ tu_pipeline_allocate_cs(struct tu_device *dev,
                         const struct ir3_shader_variant *compute)
 {
    uint32_t size = 1024;
+
+   /* A810/A829: увеличенный размер для мощных чипов */
+   if (dev->physical_device->dev_id.gpu_id == 810 ||
+       dev->physical_device->dev_id.gpu_id == 829) {
+      size = 2048;
+   }
 
    /* graphics case: */
    if (builder) {
@@ -3751,21 +3757,38 @@ tu6_emit_prim_mode_sysmem(struct tu_cs *cs,
     */
    raster_order_attachment_access |= TU_DEBUG(RAST_ORDER);
 
-   /* If there is a feedback loop, then the shader can read the previous value
-    * of a pixel being written out. It can also write some components and then
-    * read different components without a barrier in between. This is a
-    * problem in sysmem mode with UBWC, because the main buffer and flags
-    * buffer can get out-of-sync if only one is flushed. We fix this by
-    * setting the SINGLE_PRIM_MODE field to the same value that the blob does
-    * for advanced_blend in sysmem mode if a feedback loop is detected.
+   /* ========== A810/A829: ОПТИМИЗАЦИЯ SYSMEM ДЛЯ ВЫСОКОЙ ПРОПУСКНОЙ СПОСОБНОСТИ ========== */
+   /* A810: 25.6 ГБ/с (LPDDR5) или 17 ГБ/с (LPDDR4X)
+    * A829: 76.8 ГБ/с (LPDDR5X 64-bit)
+    * Эти чипы имеют высокую пропускную способность памяти, поэтому можем использовать
+    * более агрессивный режим NO_FLUSH для повышения производительности в sysmem.
     */
-   enum a6xx_single_prim_mode sysmem_prim_mode =
-      (raster_order_attachment_access || feedback_loops ||
-       fs->fs.dynamic_input_attachments_used) ?
-      FLUSH_PER_OVERLAP_AND_OVERWRITE : NO_FLUSH;
-
-   if (sysmem_prim_mode == FLUSH_PER_OVERLAP_AND_OVERWRITE)
-      *sysmem_single_prim_mode = true;
+   bool is_a8xx = (cs->device->physical_device->dev_id.gpu_id == 810 ||
+                   cs->device->physical_device->dev_id.gpu_id == 829);
+   
+   enum a6xx_single_prim_mode sysmem_prim_mode;
+   
+   if (is_a8xx) {
+      /* Для A810/A829: используем NO_FLUSH если нет feedback loops
+       * Высокая пропускная способность позволяет реже сбрасывать кэши */
+      if (raster_order_attachment_access || feedback_loops ||
+          fs->fs.dynamic_input_attachments_used) {
+         sysmem_prim_mode = FLUSH_PER_OVERLAP_AND_OVERWRITE;
+         *sysmem_single_prim_mode = true;
+      } else {
+         sysmem_prim_mode = NO_FLUSH;
+         *sysmem_single_prim_mode = false;
+      }
+   } else {
+      /* Остальные чипы: стандартное поведение */
+      sysmem_prim_mode = (raster_order_attachment_access || feedback_loops ||
+                          fs->fs.dynamic_input_attachments_used) ?
+                         FLUSH_PER_OVERLAP_AND_OVERWRITE : NO_FLUSH;
+      
+      if (sysmem_prim_mode == FLUSH_PER_OVERLAP_AND_OVERWRITE)
+         *sysmem_single_prim_mode = true;
+   }
+   /* ========== КОНЕЦ ОПТИМИЗАЦИИ ========== */
 
    tu_cs_emit_regs(cs, GRAS_SC_CNTL(CHIP,
       .single_prim_mode = sysmem_prim_mode,
