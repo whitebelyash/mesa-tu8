@@ -96,10 +96,12 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
 {
    const unsigned load_state_size = 4;
    unsigned size = 0;
-   struct tu_device *dev = pipeline->cs.device;
-   bool is_a8xx = (dev->physical_device->info->chip_id >= 0x08010000);
-   unsigned chunk_divider = is_a8xx ? 256 : 1024;
    
+   
+   uint32_t gpu_id = pipeline->cs.device->physical_device->dev_id.gpu_id;
+   bool is_a8xx = (gpu_id == 810 || gpu_id == 829);
+   unsigned chunk_divider = is_a8xx ? 256 : 1024;
+
    for (unsigned i = 0; i < layout->num_sets; i++) {
       if (!(pipeline->active_desc_sets & (1u << i)))
          continue;
@@ -121,11 +123,11 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
          case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
          case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
             if (stage_count) {
-               /* Учитываем разбиение на чанки для A8XX */
-               unsigned total = 1;
-               if (is_a8xx && (count * mul > chunk_divider))
-                  total = DIV_ROUND_UP(count * mul, chunk_divider);
-               count = total;
+               
+                  if (is_a8xx && (binding->array_size > chunk_divider))
+                  count = DIV_ROUND_UP(binding->array_size, chunk_divider);
+               else
+                  count = 1;
             }
             break;
          case VK_DESCRIPTOR_TYPE_SAMPLER:
@@ -133,12 +135,16 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
          case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
          case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
          case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-            if (is_a8xx && (count > chunk_divider))
-               count = stage_count * DIV_ROUND_UP(count, chunk_divider);
+         case VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM:
+         case VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM:
+            
+            if (is_a8xx && (binding->array_size > chunk_divider))
+               count = stage_count * DIV_ROUND_UP(binding->array_size, chunk_divider);
             else
                count = stage_count;
             break;
          case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+            
             if (is_a8xx && (binding->array_size > chunk_divider / 2))
                count = stage_count * DIV_ROUND_UP(binding->array_size, chunk_divider / 2) * 2;
             else
@@ -152,59 +158,7 @@ tu6_load_state_size(struct tu_pipeline *pipeline,
    }
    return size;
 }
-   for (unsigned i = 0; i < layout->num_sets; i++) {
-      if (!(pipeline->active_desc_sets & (1u << i)))
-         continue;
 
-      struct tu_descriptor_set_layout *set_layout = layout->set[i].layout;
-      for (unsigned j = 0; j < set_layout->binding_count; j++) {
-         struct tu_descriptor_set_binding_layout *binding = &set_layout->binding[j];
-         unsigned count = 0;
-         /* See comment in tu6_emit_load_state(). */
-         VkShaderStageFlags stages = pipeline->active_stages & binding->shader_stages;
-         unsigned stage_count = util_bitcount(stages);
-
-         if (!binding->array_size)
-            continue;
-
-         switch (binding->type) {
-         case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-         case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
-         case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-         case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-         case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
-            /* UAV-backed resources only need one packet for all graphics stages */
-            if (stage_count)
-               count += 1;
-            break;
-         case VK_DESCRIPTOR_TYPE_SAMPLER:
-         case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
-         case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-         case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
-         case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-         case VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM:
-         case VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM:
-            /* Textures and UBO's needs a packet for each stage */
-            count = stage_count;
-            break;
-         case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-            /* Because of how we pack combined images and samplers, we
-             * currently can't use one packet for the whole array.
-             */
-            count = stage_count * binding->array_size * 2;
-            break;
-         case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
-         case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK:
-         case VK_DESCRIPTOR_TYPE_MUTABLE_EXT:
-            break;
-         default:
-            UNREACHABLE("bad descriptor type");
-         }
-         size += count * load_state_size;
-      }
-   }
-   return size;
-}
 
 static void
 tu6_emit_load_state(struct tu_device *device,
