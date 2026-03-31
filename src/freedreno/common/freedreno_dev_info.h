@@ -473,6 +473,8 @@ struct fd_dev_info {
       uint32_t max_draw_states;
       /* If GMEM needs to be disabled for this GPU */
       bool disable_gmem;
+      /* GMEM size in bytes */
+      uint32_t gmem_size;
    } props;
 };
 
