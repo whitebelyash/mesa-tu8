@@ -1480,6 +1480,11 @@ add_gpus([
             sysmem_per_ccu_color_cache_size = 128 * 1024,
             sysmem_ccu_depth_cache_fraction = CCUColorCacheFraction.THREE_QUARTER.value,
             sysmem_per_ccu_depth_cache_size = 96 * 1024,
+
+            gmem_size = 2 * 1024 * 1024,
+            shading_rate_matches_vk = True, #Экспериментально!!!
+            has_ray_intersection = False,  #Отключил, т.к. для производительности откобченно и на Adreno 829
+            
         )],
         num_ccu = 4,
         num_slices = 2,
@@ -1570,7 +1575,7 @@ add_gpus([
             #Gmem буфферы
             gmem_vpc_attr_buf_size = 262144,
             gmem_vpc_pos_buf_size = 131072,
-            gmem_vpc_bv_pos_buf_size = 131072
+            gmem_vpc_bv_pos_buf_size = 131072,
              
             gmem_size = 18 * 1024 * 1024,
             has_ray_intersection = False,
