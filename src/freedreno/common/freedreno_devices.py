@@ -1375,7 +1375,39 @@ add_gpus([
         GPUId(chip_id=0x44050001, name="Adreno (TM) 830"), 
     ], A6xxGPUInfo(
         CHIP.A8XX,
-        [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen1],
+        [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen1,
+         GPUProps(
+            # Sysmem кэши
+            sysmem_vpc_attr_buf_size =  1572864,
+            sysmem_vpc_pos_buf_size = 786432,
+            sysmem_vpc_bv_pos_buf_size = 393216,
+            sysmem_ccu_color_cache_fraction = CCUColorCacheFraction.FULL.value,
+            sysmem_per_ccu_color_cache_size = 256 * 1024,
+            sysmem_ccu_depth_cache_fraction = CCUColorCacheFraction.THREE_QUARTER.value,
+            sysmem_per_ccu_depth_cache_size = 256 * 1024,
+
+            # Gmem кэши
+            gmem_vpc_attr_buf_size = 196608,
+            gmem_vpc_pos_buf_size = 98304,
+            gmem_vpc_bv_pos_buf_size = 98304,
+            
+            # Gmem глубина и цвет
+            gmem_ccu_color_cache_fraction = CCUColorCacheFraction.EIGHTH.value,
+            gmem_per_ccu_color_cache_size = 128 * 1024,
+            gmem_ccu_depth_cache_fraction = CCUColorCacheFraction.FULL.value,
+            gmem_per_ccu_depth_cache_size = 256 * 1024,
+
+            # Оптимизации
+            has_ray_intersection = True, 
+            has_sw_fuse = False,
+            has_coherent_ubwc_flag_caches = True,
+            has_fs_tex_prefetch = False,
+            has_salu_int_narrowing_quirk = True,
+            shading_rate_matches_vk = True,
+            disable_gmem = False,
+            gmem_size = 12 * 1024 * 1024 # 12 MB 
+        )],
+            
         num_ccu = 6,
         num_slices = 3,
         tile_align_w = 96,
@@ -1427,13 +1459,13 @@ add_gpus([
         num_slices = 1,
         tile_align_w = 64,
         tile_align_h = 32,
-        tile_max_w = 16384
+        tile_max_w = 16384,
         tile_max_h = 16384,
         num_vsc_pipes = 32,
         cs_shared_mem_size = 32 * 1024,
         wave_granularity = 2,
         fibers_per_sp = 128 * 2 * 16,
-    # max_waves = 16 or 32?!!!! Надо подумать над этим!
+        max_waves = 16,
         magic_regs = dict(),
         raw_magic_regs = a8xx_base_raw_magic_regs,
     ))
@@ -1521,7 +1553,38 @@ add_gpus([
     ], A6xxGPUInfo(
         CHIP.A8XX,
         [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen2,
-         GPUProps(shading_rate_matches_vk = True)],
+         GPUProps(
+                # Sysmem кэши
+            sysmem_vpc_attr_buf_size = 2097152,
+            sysmem_vpc_pos_buf_size = 1048576,
+            sysmem_vpc_bv_pos_buf_size = 524288,
+            sysmem_ccu_color_cache_fraction = CCUColorCacheFraction.FULL.value,
+            sysmem_per_ccu_color_cache_size = 512 * 1024,
+            sysmem_ccu_depth_cache_fraction = CCUColorCacheFraction.THREE_QUARTER.value,
+            sysmem_per_ccu_depth_cache_size = 512 * 1024,
+
+            # Gmem кэши
+            gmem_vpc_attr_buf_size = 262144,
+            gmem_vpc_pos_buf_size = 131072,
+            gmem_vpc_bv_pos_buf_size = 131072,
+            
+            # Gmem глубина и цвет
+            gmem_ccu_color_cache_fraction = CCUColorCacheFraction.EIGHTH.value,
+            gmem_per_ccu_color_cache_size = 256 * 1024,
+            gmem_ccu_depth_cache_fraction = CCUColorCacheFraction.FULL.value,
+            gmem_per_ccu_depth_cache_size = 512 * 1024,
+
+            # Оптимизации
+            has_ray_intersection = True, 
+            has_sw_fuse = False,
+            has_coherent_ubwc_flag_caches = True,
+            has_fs_tex_prefetch = False,
+            has_salu_int_narrowing_quirk = True,
+            shading_rate_matches_vk = True,
+            disable_gmem = False,
+            gmem_size = 18 * 1024 * 1024 
+        )],
+    
         num_ccu = 6,
         num_slices = 3,
         tile_align_w = 96,
