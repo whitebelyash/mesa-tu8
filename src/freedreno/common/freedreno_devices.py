@@ -1466,7 +1466,7 @@ add_gpus([
         cs_shared_mem_size = 32 * 1024,
         wave_granularity = 2,
         fibers_per_sp = 128 * 2 * 16,
-    # max_waves = 16 or 32?!!!!
+        max_waves = 32, # При меньшем значение вылетают даже стандартные приложения
         magic_regs = dict(),
         raw_magic_regs = a8xx_base_raw_magic_regs,
     ))
@@ -1494,7 +1494,7 @@ add_gpus([
         num_slices = 2, 
         tile_align_w = 96,
         tile_align_h = 32,
-        tile_max_w = 16416,
+        tile_max_w = 16316,
         tile_max_h = 16384,
         num_vsc_pipes = 32,
         cs_shared_mem_size = 32 * 1024,
