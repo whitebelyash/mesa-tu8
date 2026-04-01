@@ -1296,9 +1296,9 @@ a8xx_base = GPUProps(
         has_dp2acc = False,
         reg_size_vec4 = 96,
         has_rt_workaround = False,
-        supports_double_threadsize = False,
+        supports_double_threadsize = True,
         has_dual_wave_dispatch = True,
-        has_salu_int_narrowing_quirk = True,
+        has_salu_int_narrowing_quirk = False,
     )
 
 # For a8xx, the chicken bit and most other non-ctx reg
@@ -1331,6 +1331,13 @@ a8xx_base_raw_magic_regs = [
 
         [A6XXRegs.REG_A8XX_PC_UNKNOWN_980B, 0x00800280],
         [A6XXRegs.REG_A8XX_PC_MODE_CNTL,    0x00003f00],
+        [A6XXRegs.REG_A7XX_RB_UNKNOWN_8C34,   0x00000000],
+        [A6XXRegs.REG_A7XX_VPC_UNKNOWN_930A,  0x00000000],
+        [A6XXRegs.REG_A7XX_VPC_UNKNOWN_9313,  0x00000000],
+        [A6XXRegs.REG_A7XX_VPC_UNKNOWN_9380,  0x00000000],
+        [A6XXRegs.REG_A7XX_VPC_UNKNOWN_9381,  0x00000000],
+        [A6XXRegs.REG_A7XX_VPC_UNKNOWN_9382,  0x00000000],
+        [A6XXRegs.REG_A7XX_VPC_UNKNOWN_9383,  0x00000000],
     ]
 
 a8xx_gen1 = GPUProps(
