@@ -1451,7 +1451,7 @@ add_gpus([
             has_coherent_ubwc_flag_caches = True,
             has_fs_tex_prefetch = False,
             has_salu_int_narrowing_quirk = True,
-            shading_rate_matches_vk = True,
+            shading_rate_matches_vk = True, # Поддержка экспериментальная
          )],
         num_ccu = 2,
         num_slices = 1,
@@ -1488,7 +1488,7 @@ add_gpus([
             
         )],
         num_ccu = 4,
-        num_slices = 2,
+        num_slices = 2, 
         tile_align_w = 96,
         tile_align_h = 32,
         tile_max_w = 16416,
@@ -1512,7 +1512,7 @@ add_gpus([
              sysmem_vpc_bv_pos_buf_size = 24576,
             # Sysmem глубина и цвет
              sysmem_ccu_color_cache_fraction = CCUColorCacheFraction.FULL.value,
-             sysmem_per_ccu_color_cache_size = 192 * 1024,
+             sysmem_per_ccu_color_cache_size = 160 * 1024,
              sysmem_ccu_depth_cache_fraction = CCUColorCacheFraction.THREE_QUARTER.value,
              sysmem_per_ccu_depth_cache_size = 192 * 1024,
 
@@ -1541,8 +1541,8 @@ add_gpus([
         num_slices = 2,
         tile_align_w = 64,
         tile_align_h = 32,
-        tile_max_w = 256,
-        tile_max_h = 256,
+        tile_max_w = 16384,
+        tile_max_h = 16382,
         num_vsc_pipes = 32,
         cs_shared_mem_size = 32 * 1024,
         wave_granularity = 2,
