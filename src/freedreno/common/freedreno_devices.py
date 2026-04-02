@@ -1482,7 +1482,7 @@ add_gpus([
 
 # gen8_6_0
 add_gpus([
-        GPUId(chip_id=0x44030000, name="Adreno (TM) 825"),
+        GPUId(chip_id=0x44030A20, name="Adreno (TM) 825"),
     ], A6xxGPUInfo(
         CHIP.A8XX,
         [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen1, GPUProps(
@@ -1514,7 +1514,7 @@ add_gpus([
     ))
 
 add_gpus([
-    GPUId(chip_id=0x44030A20, name="Adreno (TM) 829"),
+    GPUId(chip_id= 0x44030000, name="Adreno (TM) 829"),
     ], A6xxGPUInfo(
         CHIP.A8XX,
         [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen2, GPUProps(
