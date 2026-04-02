@@ -14,105 +14,45 @@
 #define XXH_INLINE_ALL
 #include "util/xxhash.h"
 
-/* How does it work?
- *
- * - For each renderpass we calculate the number of samples passed
- *   by storing the number before and after in GPU memory.
- * - To store the values each command buffer holds GPU memory which
- *   expands with more renderpasses being written.
- * - For each renderpass we create tu_renderpass_result entry which
- *   points to the results in GPU memory.
- *   - Later on tu_renderpass_result would be added to the
- *     tu_renderpass_history entry which aggregate results for a
- *     given renderpass.
- * - On submission:
- *   - Process results which fence was signalled.
- *   - Free per-submission data which we now don't need.
- *
- *   - Create a command stream to write a fence value. This way we would
- *     know when we could safely read the results.
- *   - We cannot rely on the command buffer's lifetime when referencing
- *     its resources since the buffer could be destroyed before we process
- *     the results.
- *   - For each command buffer:
- *     - Reference its GPU memory.
- *     - Move if ONE_TIME_SUBMIT or copy all tu_renderpass_result to the queue.
- *
- * Since the command buffers could be recorded on different threads
- * we have to maintaining some amount of locking history table,
- * however we change the table only in a single thread at the submission
- * time, so in most cases there will be no locking.
- */
-
 void
 tu_autotune_free_results_locked(struct tu_device *dev, struct list_head *results);
 
 #define TU_AUTOTUNE_DEBUG_LOG 0
-/* Dump history entries on autotuner finish,
- * could be used to gather data from traces.
- */
 #define TU_AUTOTUNE_LOG_AT_FINISH 0
 
-/* How many last renderpass stats are taken into account. */
 #define MAX_HISTORY_RESULTS 5
-/* For how many submissions we store renderpass stats. */
 #define MAX_HISTORY_LIFETIME 128
 
-/* ========== GMEM КОНФИГУРАЦИЯ ДЛЯ A8XX ========== */
-/* 
- * GMEM размеры по чипам:
- * - Adreno 810:  576 KB
- * - Adreno 825:  2 MB
- * - Adreno 829:  2 MB
- * - Adreno 830:  12 MB
- * - Adreno 840:  18 MB
- */
-
-/* Bias для выбора GMEM (0-100, чем выше, тем больше шансов на GMEM) */
+/* ========== GMEM КОНФИГУРАЦИЯ ДЛЯ A8XX (БЕЗ A829) ========== */
 #define GMEM_BIAS_A810    25   /* A810: 576KB — очень мал, SYSMEM предпочтительнее */
 #define GMEM_BIAS_A825    50   /* A825: 2MB — баланс */
-#define GMEM_BIAS_A829    50   /* A829: 2MB — баланс */
 #define GMEM_BIAS_A830    75   /* A830: 12MB — предпочитаем GMEM */
 #define GMEM_BIAS_A840    80   /* A840: 18MB — сильно предпочитаем GMEM */
 
-/* Пороги переключения на GMEM по количеству draw calls */
+/* Пороги переключения на GMEM по количеству draw calls (БЕЗ A829) */
 #define GMEM_DRAW_THRESHOLD_A810    3   /* A810: при 3+ draw calls — GMEM */
 #define GMEM_DRAW_THRESHOLD_A825    4   /* A825: при 4+ draw calls — GMEM */
-#define GMEM_DRAW_THRESHOLD_A829    4   /* A829: при 4+ draw calls — GMEM */
 #define GMEM_DRAW_THRESHOLD_A830    2   /* A830: при 2+ draw calls — GMEM */
 #define GMEM_DRAW_THRESHOLD_A840    2   /* A840: при 2+ draw calls — GMEM */
-/* ================================================ */
+/* ========================================================= */
 
-/**
- * Tracks results for a given renderpass key
- */
 struct tu_renderpass_history {
    uint64_t key;
-
-   /* We would delete old history entries */
    uint32_t last_fence;
-
-   /**
-    * List of recent fd_renderpass_result's
-    */
    struct list_head results;
    uint32_t num_results;
-
    uint32_t avg_samples;
 };
 
-/* Holds per-submission cs which writes the fence. */
 struct tu_submission_data {
    struct list_head node;
    uint32_t fence;
-
    struct tu_cs fence_cs;
 };
 
 static bool
 fence_before(uint32_t a, uint32_t b)
 {
-   /* essentially a < b, but handle wrapped values */
    return (int32_t)(a - b) < 0;
 }
 
@@ -185,7 +125,6 @@ free_submission_data(struct tu_submission_data *data)
 {
    list_del(&data->node);
    tu_cs_finish(&data->fence_cs);
-
    free(data);
 }
 
@@ -231,9 +170,6 @@ get_history(struct tu_autotune *at, uint64_t rp_key, uint32_t *avg_samples)
 {
    bool has_history = false;
 
-   /* If the lock contantion would be found in the wild -
-    * we could use try_lock here.
-    */
    u_rwlock_rdlock(&at->ht_lock);
    struct hash_entry *entry =
       _mesa_hash_table_search(at->ht, &rp_key);
@@ -256,7 +192,6 @@ create_history_result(struct tu_autotune *at, uint64_t rp_key)
    struct tu_renderpass_result *result =
       (struct tu_renderpass_result *) calloc(1, sizeof(*result));
    result->rp_key = rp_key;
-
    return result;
 }
 
@@ -270,9 +205,6 @@ history_add_result(struct tu_device *dev, struct tu_renderpass_history *history,
    if (history->num_results < MAX_HISTORY_RESULTS) {
       history->num_results++;
    } else {
-      /* Once above the limit, start popping old results off the
-       * tail of the list:
-       */
       struct tu_renderpass_result *old_result =
          list_last_entry(&history->results, struct tu_renderpass_result, node);
       mtx_lock(&dev->autotune_mutex);
@@ -280,7 +212,6 @@ history_add_result(struct tu_device *dev, struct tu_renderpass_history *history,
       mtx_unlock(&dev->autotune_mutex);
    }
 
-   /* Do calculations here to avoid locking history in tu_autotune_use_bypass */
    uint32_t total_samples = 0;
    list_for_each_entry(struct tu_renderpass_result, result,
                        &history->results, node) {
@@ -324,14 +255,12 @@ queue_pending_results(struct tu_autotune *at, struct tu_cmd_buffer *cmdbuf)
          VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
    if (one_time_submit) {
-      /* We can just steal the list since it won't be resubmitted again */
       list_splicetail(&cmdbuf->renderpass_autotune_results,
                         &at->pending_results);
       list_inithead(&cmdbuf->renderpass_autotune_results);
    } else {
       list_for_each_entry_safe(struct tu_renderpass_result, result,
                               &cmdbuf->renderpass_autotune_results, node) {
-         /* TODO: copying each result isn't nice */
          struct tu_renderpass_result *copy =
             (struct tu_renderpass_result *) malloc(sizeof(*result));
          *copy = *result;
@@ -347,16 +276,11 @@ tu_autotune_on_submit(struct tu_device *dev,
                       struct tu_cmd_buffer **cmd_buffers,
                       uint32_t cmd_buffer_count)
 {
-   /* We are single-threaded here */
-
    const uint32_t gpu_fence = get_autotune_fence(at);
    const uint32_t new_fence = at->fence_counter++;
 
    process_results(at, gpu_fence);
 
-   /* Create history entries here to minimize work and locking being
-    * done on renderpass end.
-    */
    for (uint32_t i = 0; i < cmd_buffer_count; i++) {
       struct tu_cmd_buffer *cmdbuf = cmd_buffers[i];
       list_for_each_entry_safe(struct tu_renderpass_result, result,
@@ -378,7 +302,6 @@ tu_autotune_on_submit(struct tu_device *dev,
          }
 
          history->last_fence = new_fence;
-
          result->fence = new_fence;
          result->history = history;
       }
@@ -398,10 +321,6 @@ tu_autotune_on_submit(struct tu_device *dev,
    if (TU_AUTOTUNE_DEBUG_LOG)
       mesa_logi("Total history entries: %u", at->ht->entries);
 
-   /* Cleanup old entries from history table. The assumption
-    * here is that application doesn't hold many old unsubmitted
-    * command buffers, otherwise this table may grow big.
-    */
    hash_table_foreach(at->ht, entry) {
       struct tu_renderpass_history *history =
          (struct tu_renderpass_history *) entry->data;
@@ -449,7 +368,6 @@ tu_autotune_init(struct tu_autotune *at, struct tu_device *dev)
    list_inithead(&at->pending_submission_data);
    list_inithead(&at->submission_data_pool);
 
-   /* start from 1 because tu6_global::autotune_fence is initialized to 0 */
    at->fence_counter = 1;
 
    return VK_SUCCESS;
@@ -506,7 +424,6 @@ tu_autotune_submit_requires_fence(struct tu_cmd_buffer **cmd_buffers,
       if (!list_is_empty(&cmdbuf->renderpass_autotune_results))
          return true;
    }
-
    return false;
 }
 
@@ -527,7 +444,7 @@ tu_autotune_free_results(struct tu_device *dev, struct list_head *results)
    mtx_unlock(&dev->autotune_mutex);
 }
 
-/* Получение bias для GMEM в зависимости от чипа */
+/* Получение bias для GMEM в зависимости от чипа (БЕЗ A829) */
 static int
 get_gmem_bias(struct tu_device *dev)
 {
@@ -536,14 +453,13 @@ get_gmem_bias(struct tu_device *dev)
    switch (gpu_id) {
    case 810:  return GMEM_BIAS_A810;
    case 825:  return GMEM_BIAS_A825;
-   case 829:  return GMEM_BIAS_A829;
    case 830:  return GMEM_BIAS_A830;
    case 840:  return GMEM_BIAS_A840;
    default:   return 50;
    }
 }
 
-/* fallback логика выбора режима рендеринга */
+/* fallback логика выбора режима рендеринга (A829 использует стандартную логику) */
 static bool
 fallback_use_bypass(const struct tu_render_pass *pass,
                     const struct tu_framebuffer *framebuffer,
@@ -555,26 +471,24 @@ fallback_use_bypass(const struct tu_render_pass *pass,
    
    /* Adreno 810: очень маленький GMEM (576KB) — SYSMEM часто быстрее */
    if (gpu_id == 810) {
-      /* Только при большом количестве draw calls используем GMEM */
       if (draw_count >= GMEM_DRAW_THRESHOLD_A810)
-         return false;  /* Используем GMEM */
-      return true;       /* Используем SYSMEM */
+         return false;
+      return true;
    }
    
-   /* Adreno 825/829: 2MB GMEM — баланс */
-   if (gpu_id == 825 || gpu_id == 829) {
+   /* Adreno 825: 2MB GMEM — баланс */
+   if (gpu_id == 825) {
       if (draw_count >= GMEM_DRAW_THRESHOLD_A825)
-         return false;  /* GMEM */
-      return true;       /* SYSMEM */
+         return false;
+      return true;
    }
    
-   /* Adreno 830/840: большой GMEM (12-18MB) — предпочитаем GMEM */
+   /* Adreno 830/840: большой GMEM — предпочитаем GMEM */
    if (gpu_id == 830 || gpu_id == 840) {
-      /* Даже при малом количестве draw calls, GMEM может быть быстрее */
-      return false;      /* Всегда GMEM для флагманов */
+      return false;  /* Всегда GMEM для флагманов */
    }
    
-   /* Стандартная логика для других чипов */
+   /* Для A829 и всех остальных чипов используем стандартную безопасную логику */
    if (draw_count > 5)
       return false;
 
@@ -612,7 +526,6 @@ estimate_drawcall_bandwidth(const struct tu_cmd_buffer *cmd,
    if (!state->rp.drawcall_count)
       return 0;
 
-   /* sample count times drawcall_bandwidth_per_sample */
    return (uint64_t)avg_renderpass_sample_count *
       state->rp.drawcall_bandwidth_per_sample_sum / state->rp.drawcall_count;
 }
@@ -625,46 +538,18 @@ tu_autotune_use_bypass(struct tu_autotune *at,
    const struct tu_render_pass *pass = cmd_buffer->state.pass;
    const struct tu_framebuffer *framebuffer = cmd_buffer->state.framebuffer;
 
-   /* If a feedback loop in the subpass caused one of the pipelines used to set
-    * SINGLE_PRIM_MODE(FLUSH_PER_OVERLAP_AND_OVERWRITE) or even
-    * SINGLE_PRIM_MODE(FLUSH), then that should cause significantly increased
-    * sysmem bandwidth (though we haven't quantified it).
-    */
    if (cmd_buffer->state.rp.sysmem_single_prim_mode)
       return false;
 
-   /* If the user is using a fragment density map, then this will cause less
-    * FS invocations with GMEM, which has a hard-to-measure impact on
-    * performance because it depends on how heavy the FS is in addition to how
-    * many invocations there were and the density. Let's assume the user knows
-    * what they're doing when they added the map, because if sysmem is
-    * actually faster then they could've just not used the fragment density
-    * map.
-    */
    if (pass->has_fdm)
       return false;
 
-   /* For VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT buffers
-    * we would have to allocate GPU memory at the submit time and copy
-    * results into it.
-    * Native games ususally don't use it, Zink and DXVK don't use it,
-    * D3D12 doesn't have such concept.
-    */
    bool simultaneous_use =
       cmd_buffer->usage_flags & VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
 
    if (!at->enabled || simultaneous_use)
       return fallback_use_bypass(pass, framebuffer, cmd_buffer);
 
-   /* We use 64bit hash as a key since we don't fear rare hash collision,
-    * the worst that would happen is sysmem being selected when it should
-    * have not, and with 64bit it would be extremely rare.
-    *
-    * Q: Why not make the key from framebuffer + renderpass pointers?
-    * A: At least DXVK creates new framebuffers each frame while keeping
-    *    renderpasses the same. Also we want to support replaying a single
-    *    frame in a loop for testing.
-    */
    uint64_t renderpass_key = hash_renderpass_instance(pass, framebuffer, cmd_buffer);
 
    *autotune_result = create_history_result(at, renderpass_key);
@@ -681,20 +566,10 @@ tu_autotune_use_bypass(struct tu_autotune *at,
       const uint64_t total_draw_call_bandwidth =
          estimate_drawcall_bandwidth(cmd_buffer, avg_samples);
 
-      /* drawcalls access the memory in sysmem rendering (ignoring CCU) */
       sysmem_bandwidth += total_draw_call_bandwidth;
-
-      /* drawcalls access gmem in gmem rendering, but we do not want to ignore
-       * them completely.  The state changes between tiles also have an
-       * overhead.  The magic numbers of 11 and 10 are randomly chosen.
-       */
       gmem_bandwidth = (gmem_bandwidth * 11 + total_draw_call_bandwidth) / 10;
 
-      /* Получаем bias для чипа и применяем его */
       int gmem_bias = get_gmem_bias(cmd_buffer->device);
-      
-      /* Применяем bias: sysmem_bandwidth увеличиваем на bias процентов
-       * чтобы сместить выбор в сторону GMEM */
       sysmem_bandwidth = sysmem_bandwidth * (100 + gmem_bias) / 100;
       
       const bool select_sysmem = sysmem_bandwidth <= gmem_bandwidth;
@@ -738,7 +613,6 @@ tu_autotune_begin_renderpass(struct tu_cmd_buffer *cmd,
       return;
 
    struct tu_device *dev = cmd->device;
-
    static const uint32_t size = sizeof(struct tu_renderpass_samples);
 
    mtx_lock(&dev->autotune_mutex);
@@ -762,12 +636,6 @@ tu_autotune_begin_renderpass(struct tu_cmd_buffer *cmd,
                                        .write_sample_count = true).value);
       tu_cs_emit_qw(cs, result_iova);
 
-      /* If the renderpass contains an occlusion query with its own ZPASS_DONE,
-       * we have to provide a fake ZPASS_DONE event here to logically close the
-       * previous one, preventing firmware from misbehaving due to nested events.
-       * This writes into the samples_end field, which will be overwritten in
-       * tu_autotune_end_renderpass.
-       */
       if (cmd->state.rp.has_zpass_done_sample_count_write_in_rp) {
          tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 3);
          tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = ZPASS_DONE,
@@ -801,12 +669,6 @@ void tu_autotune_end_renderpass(struct tu_cmd_buffer *cmd,
    tu_cs_emit_regs(cs, A6XX_RB_SAMPLE_COUNTER_CNTL(.copy = true));
 
    if (cmd->device->physical_device->info->props.has_event_write_sample_count) {
-      /* If the renderpass contains ZPASS_DONE events we emit a fake ZPASS_DONE
-       * event here, composing a pair of these events that firmware handles without
-       * issue. This first event writes into the samples_end field and the second
-       * event overwrites it. The second event also enables the accumulation flag
-       * even when we don't use that result because the blob always sets it.
-       */
       if (cmd->state.rp.has_zpass_done_sample_count_write_in_rp) {
          tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 3);
          tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = ZPASS_DONE,
