@@ -1298,7 +1298,7 @@ a8xx_base = GPUProps(
         has_rt_workaround = False,
         supports_double_threadsize = True,
         has_dual_wave_dispatch = True,
-        has_salu_int_narrowing_quirk = True,
+        has_salu_int_narrowing_quirk = False,
     )
 
 # For a8xx, the chicken bit and most other non-ctx reg
