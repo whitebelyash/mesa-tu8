@@ -1442,9 +1442,9 @@ add_gpus([
             sysmem_vpc_bv_pos_buf_size = 32768,
 # глубины цветов sysmem
             sysmem_ccu_color_cache_fraction = CCUColorCacheFraction.FULL.value,
-            sysmem_per_ccu_color_cache_size = 32 * 1024,
+            sysmem_per_ccu_color_cache_size = 128 * 1024,
             sysmem_ccu_depth_cache_fraction = CCUColorCacheFraction.THREE_QUARTER.value,
-            sysmem_per_ccu_depth_cache_size = 32 * 1024,
+            sysmem_per_ccu_depth_cache_size = 192 * 1024,
 #Gmem глубина и цвет 
             gmem_ccu_color_cache_fraction = CCUColorCacheFraction.EIGHTH.value,
             gmem_per_ccu_color_cache_size = 32 * 1024,
@@ -1475,7 +1475,7 @@ add_gpus([
         cs_shared_mem_size = 32 * 1024,
         wave_granularity = 2,
         fibers_per_sp = 128 * 2 * 16,
-        max_waves = 32, # При меньшем значение вылетают даже стандартные приложения
+        max_waves = 32, # При меньшем значение краш
         magic_regs = dict(),
         raw_magic_regs = a8xx_base_raw_magic_regs,
     ))
