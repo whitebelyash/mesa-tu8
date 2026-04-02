@@ -1442,9 +1442,9 @@ add_gpus([
             sysmem_vpc_bv_pos_buf_size = 32768,
 # глубины цветов sysmem
             sysmem_ccu_color_cache_fraction = CCUColorCacheFraction.FULL.value,
-            sysmem_per_ccu_color_cache_size = 32 * 1024,
+            sysmem_per_ccu_color_cache_size = 64 * 1024,
             sysmem_ccu_depth_cache_fraction = CCUColorCacheFraction.THREE_QUARTER.value,
-            sysmem_per_ccu_depth_cache_size = 32 * 1024,
+            sysmem_per_ccu_depth_cache_size = 64 * 1024,
 #Gmem глубина и цвет 
             gmem_ccu_color_cache_fraction = CCUColorCacheFraction.EIGHTH.value,
             gmem_per_ccu_color_cache_size = 32 * 1024,
@@ -1465,7 +1465,7 @@ add_gpus([
             has_salu_int_narrowing_quirk = True,
             shading_rate_matches_vk = True, # Поддержка экспериментальная
          )],
-        num_ccu = 2,
+        num_ccu = 1,
         num_slices = 1,
         tile_align_w = 64,
         tile_align_h = 32,
