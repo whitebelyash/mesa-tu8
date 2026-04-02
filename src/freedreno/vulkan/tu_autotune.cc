@@ -58,6 +58,30 @@ tu_autotune_free_results_locked(struct tu_device *dev, struct list_head *results
 /* For how many submissions we store renderpass stats. */
 #define MAX_HISTORY_LIFETIME 128
 
+/* ========== GMEM КОНФИГУРАЦИЯ ДЛЯ A8XX ========== */
+/* 
+ * GMEM размеры по чипам:
+ * - Adreno 810:  576 KB
+ * - Adreno 825:  2 MB
+ * - Adreno 829:  2 MB
+ * - Adreno 830:  12 MB
+ * - Adreno 840:  18 MB
+ */
+
+/* Bias для выбора GMEM (0-100, чем выше, тем больше шансов на GMEM) */
+#define GMEM_BIAS_A810    25   /* A810: 576KB — очень мал, SYSMEM предпочтительнее */
+#define GMEM_BIAS_A825    50   /* A825: 2MB — баланс */
+#define GMEM_BIAS_A829    50   /* A829: 2MB — баланс */
+#define GMEM_BIAS_A830    75   /* A830: 12MB — предпочитаем GMEM */
+#define GMEM_BIAS_A840    80   /* A840: 18MB — сильно предпочитаем GMEM */
+
+/* Пороги переключения на GMEM по количеству draw calls */
+#define GMEM_DRAW_THRESHOLD_A810    3   /* A810: при 3+ draw calls — GMEM */
+#define GMEM_DRAW_THRESHOLD_A825    4   /* A825: при 4+ draw calls — GMEM */
+#define GMEM_DRAW_THRESHOLD_A829    4   /* A829: при 4+ draw calls — GMEM */
+#define GMEM_DRAW_THRESHOLD_A830    2   /* A830: при 2+ draw calls — GMEM */
+#define GMEM_DRAW_THRESHOLD_A840    2   /* A840: при 2+ draw calls — GMEM */
+/* ================================================ */
 
 /**
  * Tracks results for a given renderpass key
@@ -503,12 +527,55 @@ tu_autotune_free_results(struct tu_device *dev, struct list_head *results)
    mtx_unlock(&dev->autotune_mutex);
 }
 
+/* Получение bias для GMEM в зависимости от чипа */
+static int
+get_gmem_bias(struct tu_device *dev)
+{
+   uint32_t gpu_id = dev->physical_device->dev_id.gpu_id;
+   
+   switch (gpu_id) {
+   case 810:  return GMEM_BIAS_A810;
+   case 825:  return GMEM_BIAS_A825;
+   case 829:  return GMEM_BIAS_A829;
+   case 830:  return GMEM_BIAS_A830;
+   case 840:  return GMEM_BIAS_A840;
+   default:   return 50;
+   }
+}
+
+/* fallback логика выбора режима рендеринга */
 static bool
 fallback_use_bypass(const struct tu_render_pass *pass,
                     const struct tu_framebuffer *framebuffer,
                     const struct tu_cmd_buffer *cmd_buffer)
 {
-   if (cmd_buffer->state.rp.drawcall_count > 5)
+   struct tu_device *dev = cmd_buffer->device;
+   uint32_t gpu_id = dev->physical_device->dev_id.gpu_id;
+   uint32_t draw_count = cmd_buffer->state.rp.drawcall_count;
+   
+   /* Adreno 810: очень маленький GMEM (576KB) — SYSMEM часто быстрее */
+   if (gpu_id == 810) {
+      /* Только при большом количестве draw calls используем GMEM */
+      if (draw_count >= GMEM_DRAW_THRESHOLD_A810)
+         return false;  /* Используем GMEM */
+      return true;       /* Используем SYSMEM */
+   }
+   
+   /* Adreno 825/829: 2MB GMEM — баланс */
+   if (gpu_id == 825 || gpu_id == 829) {
+      if (draw_count >= GMEM_DRAW_THRESHOLD_A825)
+         return false;  /* GMEM */
+      return true;       /* SYSMEM */
+   }
+   
+   /* Adreno 830/840: большой GMEM (12-18MB) — предпочитаем GMEM */
+   if (gpu_id == 830 || gpu_id == 840) {
+      /* Даже при малом количестве draw calls, GMEM может быть быстрее */
+      return false;      /* Всегда GMEM для флагманов */
+   }
+   
+   /* Стандартная логика для других чипов */
+   if (draw_count > 5)
       return false;
 
    for (unsigned i = 0; i < pass->subpass_count; i++) {
@@ -623,7 +690,15 @@ tu_autotune_use_bypass(struct tu_autotune *at,
        */
       gmem_bandwidth = (gmem_bandwidth * 11 + total_draw_call_bandwidth) / 10;
 
+      /* Получаем bias для чипа и применяем его */
+      int gmem_bias = get_gmem_bias(cmd_buffer->device);
+      
+      /* Применяем bias: sysmem_bandwidth увеличиваем на bias процентов
+       * чтобы сместить выбор в сторону GMEM */
+      sysmem_bandwidth = sysmem_bandwidth * (100 + gmem_bias) / 100;
+      
       const bool select_sysmem = sysmem_bandwidth <= gmem_bandwidth;
+      
       if (TU_AUTOTUNE_DEBUG_LOG) {
          const VkExtent2D *extent = &cmd_buffer->state.render_areas[0].extent;
          const float drawcall_bandwidth_per_sample =
@@ -634,7 +709,8 @@ tu_autotune_use_bypass(struct tu_autotune *at,
                renderpass_key,
                cmd_buffer->state.rp.drawcall_count,
                select_sysmem ? "sysmem" : "gmem");
-         mesa_logi("   avg_samples=%u, draw_bandwidth_per_sample=%.2f, total_draw_call_bandwidth=%" PRIu64,
+         mesa_logi("   gmem_bias=%d, avg_samples=%u, draw_bandwidth_per_sample=%.2f, total_draw_call_bandwidth=%" PRIu64,
+               gmem_bias,
                avg_samples,
                drawcall_bandwidth_per_sample,
                total_draw_call_bandwidth);
