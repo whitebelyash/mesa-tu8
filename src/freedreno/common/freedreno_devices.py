@@ -1524,7 +1524,7 @@ add_gpus([
              sysmem_vpc_bv_pos_buf_size = 24576, #почему то если это значение больше возникают артефакты???
             # Sysmem глубина и цвет
              sysmem_ccu_color_cache_fraction = CCUColorCacheFraction.FULL.value,
-             sysmem_per_ccu_color_cache_size = 192 * 1024,
+             sysmem_per_ccu_color_cache_size = 128 * 1024,
              sysmem_ccu_depth_cache_fraction = CCUColorCacheFraction.THREE_QUARTER.value,
              sysmem_per_ccu_depth_cache_size = 192 * 1024,
 
@@ -1551,7 +1551,7 @@ add_gpus([
         )],
         num_ccu = 4,
         num_slices = 2,
-        tile_align_w = 64,
+        tile_align_w = 96,
         tile_align_h = 32,
         tile_max_w = 16384,
         tile_max_h = 16382,
