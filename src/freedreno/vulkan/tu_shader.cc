@@ -24,6 +24,66 @@
 #include "tu_subsampled_image.h"
 
 #include <initializer_list>
+/* ========== АСИНХРОННАЯ КОМПИЛЯЦИЯ ========== */
+
+/* Структура задачи асинхронной компиляции */
+struct tu_async_compile_job {
+   struct util_queue_fence fence;
+   struct tu_device *device;
+   struct tu_shader *shader;
+   nir_shader *nir;
+   struct tu_shader_key key;
+   struct ir3_shader_key ir3_key;
+   void *key_data;
+   size_t key_size;
+   struct tu_pipeline_layout *layout;
+   VkPipelineCreationFeedback *feedback;
+   int stage;
+   VkResult result;
+   bool is_gmem;
+};
+
+/* Функция компиляции в фоновом потоке */
+static void
+tu_async_compile_job(void *job_data, int thread_index)
+{
+   struct tu_async_compile_job *job = (struct tu_async_compile_job *)job_data;
+   struct tu_device *dev = job->device;
+   uint32_t gpu_id = dev->physical_device->dev_id.gpu_id;
+   
+   /* Adreno 810: низкий приоритет, не мешать рендерингу */
+   if (gpu_id == 810) {
+#if defined(__linux__)
+      nice(10);
+#endif
+   }
+   
+   /* Компилируем шейдер */
+   job->result = tu_shader_create(dev, &job->shader, job->nir, &job->key,
+                                   &job->ir3_key, job->key_data, job->key_size,
+                                   job->layout, false);
+   
+   /* Очищаем NIR */
+   ralloc_free(job->nir);
+   job->nir = NULL;
+}
+
+/* Функция ожидания завершения компиляции */
+static VkResult
+tu_async_compile_wait(struct tu_device *dev, struct tu_async_compile_job *job)
+{
+   util_queue_fence_wait(&job->fence);
+   return job->result;
+}
+
+/* Функция проверки готовности без блокировки */
+static bool
+tu_async_compile_ready(struct tu_async_compile_job *job)
+{
+   return util_queue_fence_is_signalled(&job->fence);
+}
+
+/* ========== КОНЕЦ АСИНХРОННОЙ КОМПИЛЯЦИИ ========== */
 
 static void
 init_ir3_nir_options(struct ir3_shader_nir_options *options,
