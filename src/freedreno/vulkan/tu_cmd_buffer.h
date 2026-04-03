@@ -740,6 +740,18 @@ struct tu_cmd_buffer
    bool vsc_initialized;
 
    bool prev_fsr_is_null;
+
+   struct {
+      uint32_t lrz_read_write;
+      uint32_t lrz_read_only;
+      uint32_t lrz_disabled;
+      uint32_t lrz_write_disabled_kill;
+      uint32_t lrz_write_disabled_a2c;
+      uint32_t lrz_full_disable_depth_export;
+      uint32_t lrz_full_disable_stencil_export;
+      uint32_t lrz_full_disable_layout_incompat;
+      uint32_t lrz_full_disable_side_effects;
+   } debug_counters;
 };
 VK_DEFINE_HANDLE_CASTS(tu_cmd_buffer, vk.base, VkCommandBuffer,
                        VK_OBJECT_TYPE_COMMAND_BUFFER)

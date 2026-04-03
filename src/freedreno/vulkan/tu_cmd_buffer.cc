@@ -1321,12 +1321,6 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
       return true;
    }
 
-   bool no_gmem = cmd->device->physical_device->dev_info.props.disable_gmem;
-   if (no_gmem) {
-       cmd->state.rp.gmem_disable_reason = "Unsupported GPU";
-       return true;
-    }
-
    /* can't fit attachments into gmem */
    if (!cmd->state.tiling->possible) {
       cmd->state.rp.gmem_disable_reason = "Can't fit attachments into gmem";
@@ -1358,6 +1352,12 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
       return true;
    }
 
+   bool no_gmem = cmd->device->physical_device->dev_info.props.disable_gmem;
+   if (no_gmem) {
+       cmd->state.rp.gmem_disable_reason = "Unsupported GPU";
+       return true;
+    }
+
    const struct tu_vsc_config *vsc = tu_vsc_config(cmd, cmd->state.tiling);
 
    /* XFB is incompatible with non-hw binning GMEM rendering, see use_hw_binning */
@@ -1380,6 +1380,37 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
 
    if (TU_DEBUG(GMEM))
       return false;
+
+   /* A8xx specific heuristics to optionally force sysmem early without autotuner history */
+   if (cmd->device->physical_device->info->chip == 8) {
+      uint32_t a8xx_chip = fd_dev_gpu_id(&cmd->device->physical_device->dev_id);
+      
+      uint32_t color_count = 0;
+      bool has_depth_stencil = false;
+      const struct tu_render_pass *pass = cmd->state.pass;
+      for (uint32_t i = 0; i < pass->subpass_count; i++) {
+         color_count = MAX2(color_count, pass->subpasses[i].color_count);
+         if (pass->subpasses[i].depth_stencil_attachment.attachment != VK_ATTACHMENT_UNUSED)
+            has_depth_stencil = true;
+      }
+
+      /* Conservative early sysmem fallback:
+       * On mid-range A8xx (like A825/A829), very heavy passes (e.g. 4+ MRTs + Depth)
+       * or passes that stress caching/metadata might be better off in sysmem.
+       * We keep this conservative: only force if we are fairly certain.
+       */
+      bool force_sysmem_a8xx = false;
+      if (a8xx_chip == 825 || a8xx_chip == 829 || a8xx_chip == 810) {
+         if (color_count >= 4 && has_depth_stencil) {
+            force_sysmem_a8xx = true;
+         }
+      }
+
+      if (force_sysmem_a8xx) {
+         cmd->state.rp.gmem_disable_reason = "A8xx conservative heavy MRT sysmem fallback";
+         return true;
+      }
+   }
 
    bool use_sysmem = tu_autotune_use_bypass(&cmd->device->autotune,
                                             cmd, autotune_result);
@@ -5211,6 +5242,21 @@ tu_EndCommandBuffer(VkCommandBuffer commandBuffer)
 
    if (TU_DEBUG_START(CHECK_CMD_BUFFER_STATUS))
       tu_cmd_buffer_status_gpu_write(cmd_buffer, TU_CMD_BUFFER_STATUS_IDLE);
+
+   if (unlikely(cmd_buffer->debug_counters.lrz_disabled ||
+                cmd_buffer->debug_counters.lrz_read_write ||
+                cmd_buffer->debug_counters.lrz_read_only)) {
+      perf_debug(cmd_buffer->device, "LRZ - RW: %u, RO: %u, Dis: %u (WD_Kill: %u, WD_A2C: %u, FD_Depth: %u, FD_Sten: %u, FD_Incompat: %u, FD_SideEff: %u)",
+                 cmd_buffer->debug_counters.lrz_read_write,
+                 cmd_buffer->debug_counters.lrz_read_only,
+                 cmd_buffer->debug_counters.lrz_disabled,
+                 cmd_buffer->debug_counters.lrz_write_disabled_kill,
+                 cmd_buffer->debug_counters.lrz_write_disabled_a2c,
+                 cmd_buffer->debug_counters.lrz_full_disable_depth_export,
+                 cmd_buffer->debug_counters.lrz_full_disable_stencil_export,
+                 cmd_buffer->debug_counters.lrz_full_disable_layout_incompat,
+                 cmd_buffer->debug_counters.lrz_full_disable_side_effects);
+   }
 
    tu_cs_end(&cmd_buffer->cs);
    tu_cs_end(&cmd_buffer->draw_cs);
