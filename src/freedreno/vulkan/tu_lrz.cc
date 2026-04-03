@@ -732,8 +732,11 @@ tu_lrz_before_sysmem_br(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
          uint64_t br_cur_buffer_iova =
             lrz_fc_iova + offsetof(fd_lrzfc_layout<A7XX>, br_cur_buffer);
 
-         /* Make sure the value is written to memory. */
-         tu_emit_event_write<CHIP>(cmd, cs, FD_CACHE_CLEAN);
+         /* Make sure the value is written to memory. 
+          * Removed redundant FD_CACHE_CLEAN: LRZ fast-clear / ZPASS values 
+          * are written via CP_EVENT_WRITE which bypasses CCU. WFI/WAIT_FOR_ME 
+          * is sufficient to synchronize CP read.
+          */
          tu_cs_emit_wfi(cs);
          tu_cs_emit_pkt7(cs, CP_WAIT_FOR_ME, 0);
 
@@ -1106,53 +1109,61 @@ tu6_calculate_lrz_state(struct tu_cmd_buffer *cmd,
    bool temporary_disable_lrz = false;
 
    /* What happens in FS could affect LRZ, e.g.: writes to gl_FragDepth or early
-    * fragment tests.  We have to skip LRZ testing and updating, but as long as
-    * the depth direction stayed the same we can continue with LRZ testing later.
+    * fragment tests.
     */
-   bool disable_lrz_due_to_fs = fs->fs.lrz.status & TU_LRZ_FORCE_DISABLE_LRZ;
+   bool allow_read = true;
+   bool allow_write = true;
 
-   /* Specifying depth write direction in shader may help us. E.g.
-    * If depth test is GREATER and FS specifies FRAG_DEPTH_LAYOUT_LESS
-    * it means that LRZ won't kill any fragment that shouldn't be killed,
-    * in other words, FS can only reduce the depth value which could
-    * make fragment to NOT pass with GREATER depth test. We just have to
-    * enable late Z test.
-    */
-   if (!disable_lrz_due_to_fs && fs->variant->writes_pos &&
-       !fs->variant->fs.early_fragment_tests &&
-       !cmd->device->instance->ignore_frag_depth_direction) {
-      if (fs->variant->fs.depth_layout == FRAG_DEPTH_LAYOUT_NONE ||
-          fs->variant->fs.depth_layout == FRAG_DEPTH_LAYOUT_ANY) {
-         disable_lrz_due_to_fs = true;
-      } else {
-         if (fs->variant->fs.depth_layout == FRAG_DEPTH_LAYOUT_GREATER) {
-            disable_lrz_due_to_fs =
-               depth_compare_op != VK_COMPARE_OP_LESS &&
-               depth_compare_op != VK_COMPARE_OP_LESS_OR_EQUAL;
-         } else if (fs->variant->fs.depth_layout == FRAG_DEPTH_LAYOUT_LESS) {
-            disable_lrz_due_to_fs =
-               depth_compare_op != VK_COMPARE_OP_GREATER &&
-               depth_compare_op != VK_COMPARE_OP_GREATER_OR_EQUAL;
-         }
-         /* FRAG_DEPTH_LAYOUT_UNCHANGED is always OK.*/
-      }
+   if (fs->fs.lrz.status & TU_LRZ_FORCE_DISABLE_WRITE) {
+      allow_write = false;
+      if (fs->variant->has_kill)
+         cmd->debug_counters.lrz_write_disabled_kill++;
+   }
 
-      cmd->state.lrz.force_late_z = disable_lrz_due_to_fs;
-   } else if (fs->variant->writes_pos && !fs->variant->fs.early_fragment_tests) {
-      disable_lrz_due_to_fs = true;
+   if (cmd->vk.dynamic_graphics_state.ms.alpha_to_coverage_enable) {
+      allow_write = false;
+      cmd->debug_counters.lrz_write_disabled_a2c++;
+   }
+
+   bool writes_depth = fs->variant->writes_pos;
+   bool writes_stencil = fs->variant->writes_stencilref;
+   bool no_earlyz = fs->fs.lrz.status & TU_LRZ_FORCE_DISABLE_LRZ;
+
+   if (writes_depth) {
+      allow_read = false;
+      allow_write = false;
       cmd->state.lrz.force_late_z = true;
+      cmd->debug_counters.lrz_full_disable_depth_export++;
+   } else if (writes_stencil) {
+      allow_read = false;
+      allow_write = false;
+      cmd->state.lrz.force_late_z = true;
+      cmd->debug_counters.lrz_full_disable_stencil_export++;
+   } else if (no_earlyz) {
+      /* Downgrade side-effects to read-only fallback instead of full disable.
+       * If early-z is disabled by side-effects, we must force_late_z.
+       */
+      allow_write = false;
+      cmd->state.lrz.force_late_z = true;
+      if (!allow_read) // if something else disabled it
+         cmd->debug_counters.lrz_full_disable_side_effects++;
    } else {
       cmd->state.lrz.force_late_z = false;
    }
 
-   if (disable_lrz_due_to_fs) {
+   if (!allow_read) {
       if (cmd->state.lrz.prev_direction != TU_LRZ_UNKNOWN || !cmd->state.lrz.gpu_dir_tracking) {
-         perf_debug(cmd->device, "Skipping LRZ due to FS");
+         perf_debug(cmd->device, "Skipping LRZ due to FS (read disabled)");
          temporary_disable_lrz = true;
+         cmd->debug_counters.lrz_full_disable_layout_incompat++;
       } else {
-         tu_lrz_disable_reason(cmd, "FS writes depth or has side-effects (TODO: fix for gpu-direction-tracking case)");
+         tu_lrz_disable_reason(cmd, "FS writes depth or has side-effects");
          disable_lrz = true;
       }
+   }
+
+   if (!allow_write) {
+      gras_lrz_cntl.lrz_write = false;
    }
 
    /* If Z is not written - it doesn't affect LRZ buffer state.
@@ -1329,6 +1340,19 @@ tu6_calculate_lrz_state(struct tu_cmd_buffer *cmd,
 
    if (temporary_disable_lrz)
       gras_lrz_cntl.enable = false;
+
+   if (!cmd->state.lrz.valid) {
+      gras_lrz_cntl.enable = false;
+      gras_lrz_cntl.lrz_write = false;
+   }
+
+   if (!gras_lrz_cntl.enable) {
+      cmd->debug_counters.lrz_disabled++;
+   } else if (gras_lrz_cntl.lrz_write) {
+      cmd->debug_counters.lrz_read_write++;
+   } else {
+      cmd->debug_counters.lrz_read_only++;
+   }
 
    cmd->state.lrz.enabled = cmd->state.lrz.valid && gras_lrz_cntl.enable;
    if (!cmd->state.lrz.enabled)
