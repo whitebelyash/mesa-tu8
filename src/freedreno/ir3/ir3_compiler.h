@@ -388,6 +388,47 @@ void ir3_shader_bisect_dump_id(struct ir3_shader_variant *v);
 bool ir3_shader_bisect_select(struct ir3_shader_variant *v);
 bool ir3_shader_bisect_disasm_select(struct ir3_shader_variant *v);
 
+/* ========== A8XX HELPER FUNCTIONS ========== */
+
+/* Helper function to check if double threadsize should be forced for A8XX */
+static inline bool
+ir3_force_double_threadsize(struct ir3_compiler *compiler)
+{
+   if (compiler->gen >= 8)
+      return true;
+   return compiler->info->props.supports_double_threadsize;
+}
+
+/* Helper function to check if A8XX should use aggressive const limits */
+static inline bool
+ir3_use_aggressive_const_limits(struct ir3_compiler *compiler)
+{
+   return compiler->gen >= 8;
+}
+
+/* Helper function to get optimal delay slots for current gen */
+static inline unsigned
+ir3_get_alu_to_alu_delay(struct ir3_compiler *compiler)
+{
+   if (compiler->gen >= 8)
+      return 1;
+   if (compiler->gen >= 7)
+      return 2;
+   return 3;
+}
+
+static inline unsigned
+ir3_get_non_alu_delay(struct ir3_compiler *compiler)
+{
+   if (compiler->gen >= 8)
+      return 4;
+   if (compiler->gen >= 7)
+      return 5;
+   return 6;
+}
+
+/* ========== END A8XX HELPER FUNCTIONS ========== */
+
 ENDC;
 
 #endif /* IR3_COMPILER_H_ */
