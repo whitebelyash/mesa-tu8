@@ -34,39 +34,47 @@ static const VkOffset2D blt_no_coord = { ~0, ~0 };
 
 template <chip CHIP>
 static void
-tu_force_ccu_flush_depth(struct tu_cmd_buffer *cmd, struct tu_cs *cs, uint32_t gpu_id)
+tu_force_ccu_flush(struct tu_cmd_buffer *cmd, struct tu_cs *cs, uint32_t gpu_id)
 {
    /* Для A829 с большим кэшем глубины (192KB) нужен принудительный сброс */
    if (gpu_id == 829) {
-      /* Полный сброс кэша глубины и цвета */
       if (CHIP >= A7XX) {
-         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 1);
-         tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = CCU_FLUSH_DEPTH_TS).value);
-         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 1);
-         tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = CCU_FLUSH_COLOR_TS).value);
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 4);
+         tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = CACHE_FLUSH_TS,
+                                          .write_src = EV_WRITE_ALWAYSON,
+                                          .write_dst = EV_DST_RAM,
+                                          .write_enabled = true).value);
+         tu_cs_emit_qw(cs, 0);
+         tu_cs_emit(cs, 0);
       } else {
-         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 1);
-         tu_cs_emit(cs, CP_EVENT_WRITE_0_EVENT(CCU_FLUSH_DEPTH_TS));
-         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 1);
-         tu_cs_emit(cs, CP_EVENT_WRITE_0_EVENT(CCU_FLUSH_COLOR_TS));
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 4);
+         tu_cs_emit(cs, CP_EVENT_WRITE_0_EVENT(CACHE_FLUSH_TS));
+         tu_cs_emit_qw(cs, 0);
+         tu_cs_emit(cs, 0);
       }
-      /* Ждём завершения сброса */
       tu_cs_emit_wfi(cs);
    }
 }
 
-/* Принудительная инвалидация кэша CCU после операций */
+/* Принудительная инвалидация кэша */
 template <chip CHIP>
 static void
-tu_force_ccu_invalidate_depth(struct tu_cmd_buffer *cmd, struct tu_cs *cs, uint32_t gpu_id)
+tu_force_ccu_invalidate(struct tu_cmd_buffer *cmd, struct tu_cs *cs, uint32_t gpu_id)
 {
    if (gpu_id == 829) {
       if (CHIP >= A7XX) {
-         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 1);
-         tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = CCU_INVALIDATE_DEPTH).value);
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 4);
+         tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = CACHE_INVALIDATE,
+                                          .write_src = EV_WRITE_ALWAYSON,
+                                          .write_dst = EV_DST_RAM,
+                                          .write_enabled = true).value);
+         tu_cs_emit_qw(cs, 0);
+         tu_cs_emit(cs, 0);
       } else {
-         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 1);
-         tu_cs_emit(cs, CP_EVENT_WRITE_0_EVENT(CCU_INVALIDATE_DEPTH));
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 4);
+         tu_cs_emit(cs, CP_EVENT_WRITE_0_EVENT(CACHE_INVALIDATE));
+         tu_cs_emit_qw(cs, 0);
+         tu_cs_emit(cs, 0);
       }
    }
 }
@@ -143,15 +151,6 @@ blit_format_texture(enum pipe_format format, enum a6xx_tile_mode tile_mode, bool
    switch (format) {
    case PIPE_FORMAT_Z24X8_UNORM:
    case PIPE_FORMAT_Z24_UNORM_S8_UINT:
-      /* Similar to in fdl6_view_init, we want to use
-       * FMT6_Z24_UNORM_S8_UINT_AS_R8G8B8A8 or FMT6_8_8_8_8_UNORM for blit
-       * src.  Since this is called when there is no image and thus no ubwc,
-       * we can always use FMT6_8_8_8_8_UNORM.
-       *
-       * Note (A7XX): Since it's erroneous to use FMT6_8_8_8_8_UNORM for a GMEM
-       * image (see blit_base_format), we use FMT6_Z24_UNORM_S8_UINT_AS_R8G8B8A8
-       * instead.
-       */
       fmt.fmt = CHIP >= A7XX && gmem ? FMT6_Z24_UNORM_S8_UINT_AS_R8G8B8A8 : FMT6_8_8_8_8_UNORM;
       break;
    default:
@@ -169,7 +168,6 @@ blit_format_color(enum pipe_format format, enum a6xx_tile_mode tile_mode)
    switch (format) {
    case PIPE_FORMAT_Z24X8_UNORM:
    case PIPE_FORMAT_Z24_UNORM_S8_UINT:
-      /* similar to blit_format_texture but for blit dst */
       fmt.fmt = FMT6_8_8_8_8_UNORM;
       break;
    default:
@@ -184,25 +182,18 @@ static enum a6xx_format
 blit_base_format(enum pipe_format format, bool ubwc, bool gmem)
 {
    if (CHIP >= A7XX && gmem)
-      /* A7XX requires D24S8 in GMEM to always be treated as
-       * FMT6_Z24_UNORM_S8_UINT_AS_R8G8B8A8 regardless of if the image
-       * is UBWC-compatible. Using FMT6_8_8_8_8_UNORM instead will result
-       * in misrendering around the edges of the destination image.
-       */
       ubwc = true;
 
    if (ubwc) {
       switch (format) {
       case PIPE_FORMAT_Z24X8_UNORM:
       case PIPE_FORMAT_Z24_UNORM_S8_UINT:
-         /* use the ubwc-compatible FMT6_Z24_UNORM_S8_UINT_AS_R8G8B8A8 */
          return FMT6_Z24_UNORM_S8_UINT_AS_R8G8B8A8;
       default:
          break;
       }
    }
 
-   /* note: tu6_format_color doesn't care about tiling for .fmt field */
    return blit_format_color(format, TILE6_LINEAR).fmt;
 }
 
@@ -239,7 +230,6 @@ r2d_clear_value(struct tu_cmd_buffer *cmd,
    switch (format) {
    case PIPE_FORMAT_Z24_UNORM_S8_UINT:
    case PIPE_FORMAT_Z24X8_UNORM:
-      /* cleared as r8g8b8a8_unorm using special format */
       clear_value[0] = tu_pack_float32_for_unorm(val->depthStencil.depth, 24);
       clear_value[1] = clear_value[0] >> 8;
       clear_value[2] = clear_value[0] >> 16;
@@ -247,14 +237,12 @@ r2d_clear_value(struct tu_cmd_buffer *cmd,
       break;
    case PIPE_FORMAT_Z16_UNORM:
    case PIPE_FORMAT_Z32_FLOAT:
-      /* R2D_FLOAT32 */
       clear_value[0] = fui(val->depthStencil.depth);
       break;
    case PIPE_FORMAT_S8_UINT:
       clear_value[0] = val->depthStencil.stencil;
       break;
    case PIPE_FORMAT_R9G9B9E5_FLOAT:
-      /* cleared as UINT32 */
       clear_value[0] = float3_to_rgb9e5(val->color.float32);
       break;
    default:
@@ -299,15 +287,6 @@ static void
 fixup_src_format(enum pipe_format *src_format, enum pipe_format dst_format,
                  enum a6xx_format *fmt)
 {
-   /* When blitting S8 -> D24S8 or vice versa, we have to override S8, which
-    * is normally R8_UINT for sampling/blitting purposes, to a unorm format.
-    * We also have to move stencil, which is normally in the .w channel, into
-    * the right channel. Reintepreting the S8 texture as A8_UNORM solves both
-    * problems, and avoids using a swap, which seems to sometimes not work
-    * with a D24S8 source, or a texture swizzle which is only supported with
-    * the 3d path. Sometimes this blit happens on already-constructed
-    * fdl6_view's, e.g. for sysmem resolves, so this has to happen as a fixup.
-    */
    if (*src_format == PIPE_FORMAT_S8_UINT &&
        (dst_format == PIPE_FORMAT_Z24_UNORM_S8_UINT ||
         dst_format == PIPE_FORMAT_Z24_UNORM_S8_UINT_AS_R8G8B8A8)) {
@@ -370,7 +349,6 @@ r2d_src_depth(struct tu_cmd_buffer *cmd,
    tu_cs_emit(cs, tu_image_view_depth(iview, TPL1_A2D_SRC_TEXTURE_INFO));
    tu_cs_emit(cs, iview->view.TPL1_A2D_SRC_TEXTURE_SIZE);
    tu_cs_emit_qw(cs, iview->depth_base_addr + iview->depth_layer_size * layer);
-   /* TPL1_A2D_SRC_TEXTURE_PITCH has shifted pitch field */
    tu_cs_emit(cs, TPL1_A2D_SRC_TEXTURE_PITCH(CHIP, .pitch = iview->depth_pitch).value);
 
    tu_cs_emit_pkt4(cs, __TPL1_A2D_SRC_TEXTURE_FLAG_BASE<CHIP>({}).reg, 3);
@@ -428,9 +406,6 @@ r2d_src_buffer_unaligned(struct tu_cmd_buffer *cmd,
                          uint32_t height,
                          enum pipe_format dst_format)
 {
-   /* This functionality is only allowed on A7XX, this assertion statically
-    * disallows calling this function on prior generations by mistake.
-    */
    static_assert(CHIP >= A7XX);
 
    struct tu_native_format fmt =
@@ -537,7 +512,6 @@ r2d_setup_common(struct tu_cmd_buffer *cmd,
    bool force_3d_clear = tu_need_3d_depth_clear(cmd, dst_format);
    
    if (force_3d_clear && clear) {
-      /* Для A8XX используем 3D путь вместо 2D fast clear */
       return;
    }
 
@@ -551,18 +525,15 @@ r2d_setup_common(struct tu_cmd_buffer *cmd,
 
    uint32_t unknown_8c01 = 0;
 
-   /* note: the only format with partial clearing is D24S8 */
    if (dst_format == PIPE_FORMAT_Z24_UNORM_S8_UINT) {
-      /* preserve stencil channel */
       if (aspect_mask == VK_IMAGE_ASPECT_DEPTH_BIT)
          unknown_8c01 = 0x08000041;
-      /* preserve depth channels */
       if (aspect_mask == VK_IMAGE_ASPECT_STENCIL_BIT)
          unknown_8c01 = 0x00084001;
    }
 
    tu_cs_emit_pkt4(cs, REG_A6XX_RB_A2D_PIXEL_CNTL, 1);
-   tu_cs_emit(cs, unknown_8c01);    // TODO: seem to be always 0 on A7XX
+   tu_cs_emit(cs, unknown_8c01);
 
    tu_cs_emit_regs(cs, A6XX_RB_A2D_BLT_CNTL(
       .rotate = (enum a6xx_rotation) blit_param,
@@ -634,12 +605,24 @@ static void
 r2d_teardown(struct tu_cmd_buffer *cmd,
              struct tu_cs *cs)
 {
-   /* Для A829 форсируем сброс CCU после 2D операций */
    uint32_t gpu_id = cmd->device->physical_device->dev_id.gpu_id;
    
    if (gpu_id == 829) {
-      TU_CALLX(cmd->device, tu_force_ccu_flush_depth)(cmd, cs, gpu_id);
-      TU_CALLX(cmd->device, tu_force_ccu_invalidate_depth)(cmd, cs, gpu_id);
+      if (cmd->device->compiler->gen >= 7) {
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 4);
+         tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = CACHE_FLUSH_TS,
+                                          .write_src = EV_WRITE_ALWAYSON,
+                                          .write_dst = EV_DST_RAM,
+                                          .write_enabled = true).value);
+         tu_cs_emit_qw(cs, 0);
+         tu_cs_emit(cs, 0);
+      } else {
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 4);
+         tu_cs_emit(cs, CP_EVENT_WRITE_0_EVENT(CACHE_FLUSH_TS));
+         tu_cs_emit_qw(cs, 0);
+         tu_cs_emit(cs, 0);
+      }
+      tu_cs_emit_wfi(cs);
    }
 }
 
@@ -648,16 +631,12 @@ r2d_run(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
 {
    if (cmd->device->physical_device->info->magic.RB_DBG_ECO_CNTL_blit !=
        cmd->device->physical_device->info->magic.RB_DBG_ECO_CNTL) {
-      /* This a non-context register, so we have to WFI before changing. */
       tu_cs_emit_wfi(cs);
       tu_cs_emit_write_reg(
          cs, REG_A6XX_RB_DBG_ECO_CNTL,
          cmd->device->physical_device->info->magic.RB_DBG_ECO_CNTL_blit);
    }
 
-   /* TODO: try to track when there has been a draw without any intervening
-    * WFI or CP_EVENT_WRITE and only WFI then.
-    */
    if (cmd->device->physical_device->info->props.blit_wfi_quirk)
       tu_cs_emit_wfi(cs);
 
@@ -712,7 +691,6 @@ build_blit_vs_shader(void)
    nir_def *vert0_coords = load_const(b, 2, 2);
    nir_def *vert1_coords = load_const(b, 6, 2);
 
-   /* Only used with "z scale" blit path which uses a 3d texture */
    nir_def *z_coord = load_const(b, 16, 1);
 
    nir_def *coords = nir_bcsel(b, nir_i2b(b, vertex), vert1_coords, vert0_coords);
@@ -782,7 +760,6 @@ build_clear_vs_shader(void)
                                         glsl_vec4_type());
    nir_def *vert0_pos = load_const(b, 0, 2);
    nir_def *vert1_pos = load_const(b, 4, 2);
-   /* c0.z is used to clear depth */
    nir_def *depth = load_const(b, 2, 1);
    nir_def *vertex = nir_load_vertex_id(b);
 
@@ -828,19 +805,12 @@ build_blit_fs_shader(bool zscale)
       nir_tex(b, nir_load_var(b, in_coords),
               .texture_index = 0, .sampler_index = 0,
               .dim = zscale ? GLSL_SAMPLER_DIM_3D : GLSL_SAMPLER_DIM_2D,
-
-              /* Note: since we're just copying data, we rely on the HW ignoring
-               * the base type.
-               */
               .dest_type = nir_type_int32);
 
    nir_store_var(b, out_color, res, 0xf);
    return b->shader;
 }
 
-/* We can only read multisample textures via txf_ms, so we need a separate
- * variant for them.
- */
 static nir_shader *
 build_ms_copy_fs_shader(void)
 {
@@ -865,10 +835,6 @@ build_ms_copy_fs_shader(void)
    nir_def *tex = nir_txf_ms(b, coord, nir_load_sample_id(b),
                              .texture_index = 0, .sampler_index = 0,
                              .dim = GLSL_SAMPLER_DIM_MS,
-
-                             /* Note: since we're just copying data, we rely on
-                              * the HW ignoring the dest_type.
-                               */
                              .dest_type = nir_type_int32);
 
    nir_store_var(b, out_color, tex, 0xf);
@@ -1030,7 +996,6 @@ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
       tu_cs_emit_regs(cs, SP_RENDER_CNTL(CHIP, .fs_disable = false));
    }
 
-   /* REPL_MODE for varying with RECTLIST (2 vertices only) */
    tu_cs_emit_regs(cs, VPC_VARYING_INTERP_MODE_MODE(CHIP, 0, 0));
    tu_cs_emit_regs(cs, VPC_VARYING_REPLACE_MODE_MODE(CHIP, 0, 2 << 2 | 1 << 0));
 
@@ -1046,7 +1011,7 @@ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
                       .vp_clip_code_ignore = 1,
                       .vp_xform_disable = 1,
                       .persp_division_disable = 1,));
-   tu_cs_emit_regs(cs, GRAS_SU_CNTL(CHIP)); // XXX msaa enable?
+   tu_cs_emit_regs(cs, GRAS_SU_CNTL(CHIP));
 
    tu_cs_emit_regs(cs, VPC_RAST_CNTL(CHIP, POLYMODE6_TRIANGLES));
 
@@ -1142,7 +1107,6 @@ r3d_coords_raw(struct tu_cmd_buffer *cmd, struct tu_cs *cs, const float *coords)
    tu6_emit_blit_consts_load(cmd, cs, CP_LOAD_STATE6_GEOM, SB6_VS_SHADER, 0, coords, 2);
 }
 
-/* z coordinate for "z scale" blit path which uses a 3d texture */
 static void
 r3d_coord_z(struct tu_cmd_buffer *cmd, struct tu_cs *cs, float z)
 {
@@ -1231,7 +1195,6 @@ r3d_clear_value(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum pipe_format fo
    switch (format) {
    case PIPE_FORMAT_Z24X8_UNORM:
    case PIPE_FORMAT_Z24_UNORM_S8_UINT: {
-      /* cleared as r8g8b8a8_unorm using special format */
       uint32_t tmp = tu_pack_float32_for_unorm(val->depthStencil.depth, 24);
       coords[0] = fui((tmp & 0xff) / 255.0f);
       coords[1] = fui((tmp >> 8 & 0xff) / 255.0f);
@@ -1252,7 +1215,6 @@ r3d_clear_value(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum pipe_format fo
       coords[3] = 0;
       break;
    default:
-      /* as color formats use clear value as-is */
       assert(!util_format_is_depth_or_stencil(format));
       memcpy(coords, val->color.uint32, 4 * sizeof(uint32_t));
       break;
@@ -1272,8 +1234,7 @@ r3d_src_common(struct tu_cmd_buffer *cmd,
 {
    struct tu_cs_memory texture = { };
    VkResult result = tu_cs_alloc(&cmd->sub_cs,
-                                 2, /* allocate space for a sampler too */
-                                 FDL6_TEX_CONST_DWORDS, &texture);
+                                 2, FDL6_TEX_CONST_DWORDS, &texture);
    if (result != VK_SUCCESS) {
       vk_command_buffer_set_error(&cmd->vk, result);
       return;
@@ -1281,7 +1242,6 @@ r3d_src_common(struct tu_cmd_buffer *cmd,
 
    memcpy(texture.map, tex_const, FDL6_TEX_CONST_DWORDS * 4);
 
-   /* patch addresses for layer offset */
    uint64_t addr = tu_desc_get_addr<CHIP>(texture.map);
    tu_desc_set_addr<CHIP>(texture.map, addr + offset_base);
    uint64_t ubwc_addr = tu_desc_get_ubwc<CHIP>(texture.map);
@@ -1307,7 +1267,7 @@ r3d_src_common(struct tu_cmd_buffer *cmd,
          A6XX_TEX_SAMP_0_WRAP_S(A6XX_TEX_CLAMP_TO_EDGE) |
          A6XX_TEX_SAMP_0_WRAP_T(A6XX_TEX_CLAMP_TO_EDGE) |
          A6XX_TEX_SAMP_0_WRAP_R(A6XX_TEX_CLAMP_TO_EDGE) |
-         0x60000; /* XXX used by blob, doesn't seem necessary */
+         0x60000;
       texture.map[FDL6_TEX_CONST_DWORDS + 1] =
          A6XX_TEX_SAMP_1_UNNORM_COORDS |
          A6XX_TEX_SAMP_1_MIPFILTER_LINEAR_FAR;
@@ -1375,7 +1335,6 @@ r3d_src_buffer(struct tu_cmd_buffer *cmd,
    enum a6xx_format color_format = fmt.fmt;
    fixup_src_format(&format, dst_format, &color_format);
 
-   /* TODO are sRGB buffers a thing? */
    if (CHIP >= A8XX) {
       desc[4] = COND(util_format_is_srgb(format), A8XX_TEX_MEMOBJ_4_SRGB);
    } else {
@@ -1435,7 +1394,6 @@ r3d_src_stencil(struct tu_cmd_buffer *cmd,
    memcpy(desc, iview->view.descriptor, sizeof(desc));
    uint64_t va = iview->stencil_base_addr;
 
-   /* Separate stencil is linear even if depth is not: */
    tu_desc_set_ubwc<CHIP>(desc, 0);
 
    tu_desc_set_min_line_offset<CHIP>(desc, 0);
@@ -1464,7 +1422,6 @@ r3d_src_load(struct tu_cmd_buffer *cmd,
 
    memcpy(desc, iview->view.descriptor, sizeof(desc));
 
-   /* Fixup D24 formats because we always load both depth and stencil. */
    enum pipe_format format = iview->view.format;
    if (format == PIPE_FORMAT_X24S8_UINT ||
        format == PIPE_FORMAT_Z24X8_UNORM ||
@@ -1478,10 +1435,6 @@ r3d_src_load(struct tu_cmd_buffer *cmd,
       tu_desc_set_format<CHIP>(desc, tex_format);
    }
 
-   /* When loading/storing GMEM we always load the full image and don't do any
-    * swizzling or swapping, that's done in the draw when reading/writing
-    * GMEM, so we need to fixup the swizzle and swap.
-    */
    if (override_swap)
       tu_desc_set_swap<CHIP>(desc, WZYX);
    tu_desc_set_swiz<CHIP>(desc, tu_swiz(X, Y, Z, W));
@@ -1531,16 +1484,11 @@ r3d_src_gmem(struct tu_cmd_buffer *cmd,
                                 iview->view.is_mutable, true).fmt;
    fixup_src_format(&format, dst_format, &fmt);
 
-   /* patched for gmem */
    tu_desc_set_tile_mode<CHIP>(desc, TILE6_2);
 
    if (!iview->view.is_mutable)
       tu_desc_set_swap<CHIP>(desc, WZYX);
 
-   /* If FDM offset is used, the last row and column extend beyond the
-    * framebuffer but are shifted over when storing. Expand the width and
-    * height to account for that.
-    */
    if (tu_enable_fdm_offset(cmd)) {
       uint32_t width, height;
 
@@ -1559,15 +1507,11 @@ r3d_src_gmem(struct tu_cmd_buffer *cmd,
 
    uint64_t va = gmem_offset;
    if (CHIP < A8XX) {
-      /* For gen8, address is simply gmem_offset if tile_mode is gmem
-       * tiling (TILE6_2)
-       */
       va += cmd->device->physical_device->gmem_base;
    }
 
    tu_desc_set_addr<CHIP>(desc, va);
 
-   /* patch the format so that depth/stencil get the right format and swizzle */
    tu_desc_set_format<CHIP>(desc, fmt);
    tu_desc_set_swiz<CHIP>(desc, tu_swiz(X, Y, Z, W));
    tu_desc_set_type<CHIP>(desc, A6XX_TEX_2D);
@@ -1600,9 +1544,6 @@ r3d_dst(struct tu_cs *cs, const struct fdl6_view *iview, uint32_t layer,
    tu_cs_emit_pkt4(cs, REG_A6XX_RB_COLOR_FLAG_BUFFER(0), 3);
    tu_cs_image_flag_ref(cs, iview, layer);
 
-   /* Use color format from RB_MRT_BUF_INFO. This register is relevant for
-    * FMT6_NV12_Y.
-    */
    tu_cs_emit_regs(cs, GRAS_LRZ_MRT_BUFFER_INFO_0(CHIP, .color_format = fmt));
 
    tu_cs_emit_regs(cs, RB_RENDER_CNTL(CHIP, .flag_mrts = iview->ubwc_enabled));
@@ -1699,9 +1640,6 @@ r3d_dst_gmem(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
       gmem_offset = tu_attachment_gmem_offset(cmd, att, layer);
    }
 
-   /* On a7xx we must always use FMT6_Z24_UNORM_S8_UINT_AS_R8G8B8A8. See
-    * blit_base_format().
-    */
    if (CHIP >= A7XX && att->format == VK_FORMAT_D24_UNORM_S8_UINT) {
       RB_MRT_BUF_INFO = pkt_field_set(A6XX_RB_MRT_BUF_INFO_COLOR_FORMAT,
                                       RB_MRT_BUF_INFO,
@@ -1730,9 +1668,6 @@ aspect_write_mask(enum pipe_format format, VkImageAspectFlags aspect_mask)
 {
    uint8_t mask = 0xf;
    assert(aspect_mask);
-   /* note: the only format with partial writing is D24S8,
-    * clear/blit uses the _AS_R8G8B8A8 format to access it
-    */
    if (format == PIPE_FORMAT_Z24_UNORM_S8_UINT) {
       if (aspect_mask == VK_IMAGE_ASPECT_DEPTH_BIT)
          mask = 0x7;
@@ -1747,7 +1682,6 @@ aspect_write_mask_generic_clear(enum pipe_format format, VkImageAspectFlags aspe
 {
    uint8_t mask = 0xf;
    assert(aspect_mask);
-   /* note: the only format with partial writing is D24S8 */
    if (format == PIPE_FORMAT_Z24_UNORM_S8_UINT) {
       if (aspect_mask == VK_IMAGE_ASPECT_DEPTH_BIT)
          mask = 0x1;
@@ -1869,10 +1803,6 @@ r3d_setup(struct tu_cmd_buffer *cmd,
       tu_cs_emit_regs(cs, GRAS_VRS_CONFIG(CHIP));
    }
 
-   /* We need to handle overlapping blits the same as feedback loops, which
-    * means setting this bit to avoid corruption due to UBWC flag caches
-    * becoming desynchronized. On a7xx+ UBWC caches are coherent.
-    */
    enum a6xx_single_prim_mode prim_mode =
       CHIP == A6XX && (blit_param & R3D_OVERLAPPING) && ubwc ?
       FLUSH_PER_OVERLAP_AND_OVERWRITE : NO_FLUSH;
@@ -1881,7 +1811,6 @@ r3d_setup(struct tu_cmd_buffer *cmd,
       .single_prim_mode = prim_mode,
       .ccusinglecachelinesize = 2));
 
-   /* Disable sample counting in order to not affect occlusion query. */
    tu_cs_emit_regs(cs, A6XX_RB_SAMPLE_COUNTER_CNTL(.disable = true));
 
    tu_cs_emit_regs(cs, A6XX_RB_DITHER_CNTL());
@@ -1906,8 +1835,8 @@ r3d_run(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
    tu_cs_emit(cs, CP_DRAW_INDX_OFFSET_0_PRIM_TYPE(DI_PT_RECTLIST) |
                   CP_DRAW_INDX_OFFSET_0_SOURCE_SELECT(DI_SRC_SEL_AUTO_INDEX) |
                   CP_DRAW_INDX_OFFSET_0_VIS_CULL(IGNORE_VISIBILITY));
-   tu_cs_emit(cs, 1); /* instance count */
-   tu_cs_emit(cs, 2); /* vertex count */
+   tu_cs_emit(cs, 1);
+   tu_cs_emit(cs, 2);
 }
 
 static void
@@ -1917,8 +1846,8 @@ r3d_run_vis(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
    tu_cs_emit(cs, CP_DRAW_INDX_OFFSET_0_PRIM_TYPE(DI_PT_RECTLIST) |
                   CP_DRAW_INDX_OFFSET_0_SOURCE_SELECT(DI_SRC_SEL_AUTO_INDEX) |
                   CP_DRAW_INDX_OFFSET_0_VIS_CULL(USE_VISIBILITY));
-   tu_cs_emit(cs, 1); /* instance count */
-   tu_cs_emit(cs, 2); /* vertex count */
+   tu_cs_emit(cs, 1);
+   tu_cs_emit(cs, 2);
 }
 
 static void
@@ -1928,8 +1857,8 @@ r3d_run_multi(struct tu_cmd_buffer *cmd, struct tu_cs *cs, unsigned count)
    tu_cs_emit(cs, CP_DRAW_INDX_OFFSET_0_PRIM_TYPE(DI_PT_RECTLIST) |
                   CP_DRAW_INDX_OFFSET_0_SOURCE_SELECT(DI_SRC_SEL_AUTO_INDEX) |
                   CP_DRAW_INDX_OFFSET_0_VIS_CULL(IGNORE_VISIBILITY));
-   tu_cs_emit(cs, 1); /* instance count */
-   tu_cs_emit(cs, count * 2); /* vertex count */
+   tu_cs_emit(cs, 1);
+   tu_cs_emit(cs, count * 2);
 }
 
 template <chip CHIP>
@@ -1938,10 +1867,22 @@ r3d_teardown(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
 {
    uint32_t gpu_id = cmd->device->physical_device->dev_id.gpu_id;
    
-   /* Для A829 форсируем сброс CCU после 3D операций */
    if (gpu_id == 829) {
-      tu_force_ccu_flush_depth<CHIP>(cmd, cs, gpu_id);
-      tu_force_ccu_invalidate_depth<CHIP>(cmd, cs, gpu_id);
+      if (CHIP >= A7XX) {
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 4);
+         tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = CACHE_FLUSH_TS,
+                                          .write_src = EV_WRITE_ALWAYSON,
+                                          .write_dst = EV_DST_RAM,
+                                          .write_enabled = true).value);
+         tu_cs_emit_qw(cs, 0);
+         tu_cs_emit(cs, 0);
+      } else {
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 4);
+         tu_cs_emit(cs, CP_EVENT_WRITE_0_EVENT(CACHE_FLUSH_TS));
+         tu_cs_emit_qw(cs, 0);
+         tu_cs_emit(cs, 0);
+      }
+      tu_cs_emit_wfi(cs);
    }
    
    if (cmd->state.predication_active) {
@@ -1949,7 +1890,6 @@ r3d_teardown(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
       tu_cs_emit(cs, 1);
    }
 
-   /* Re-enable sample counting. */
    tu_cs_emit_regs(cs, A6XX_RB_SAMPLE_COUNTER_CNTL(.disable = false));
 
    if (cmd->state.prim_generated_query_running_before_rp) {
@@ -1998,7 +1938,7 @@ struct blit_ops {
                  enum pipe_format src_format,
                  enum pipe_format dst_format,
                  VkImageAspectFlags aspect_mask,
-                 unsigned blit_param, /* CmdBlitImage: rotation in 2D path and z scaling in 3D path */
+                 unsigned blit_param,
                  bool clear,
                  bool ubwc,
                  VkSampleCountFlagBits src_samples,
@@ -2042,7 +1982,6 @@ static const struct blit_ops r3d_ops = {
    .teardown = r3d_teardown<CHIP>,
 };
 
-/* passthrough set coords from 3D extents */
 static void
 coords(const struct blit_ops *ops,
        struct tu_cmd_buffer *cmd,
@@ -2055,11 +1994,6 @@ coords(const struct blit_ops *ops,
                (VkExtent2D) {extent.width, extent.height});
 }
 
-/* Decides the VK format to treat our data as for a memcpy-style blit. We have
- * to be a bit careful because we have to pick a format with matching UBWC
- * compression behavior, so no just returning R8_UINT/R16_UINT/R32_UINT for
- * everything.
- */
 static enum pipe_format
 copy_format(VkFormat vk_format, VkImageAspectFlags aspect_mask)
 {
@@ -2077,22 +2011,15 @@ copy_format(VkFormat vk_format, VkImageAspectFlags aspect_mask)
 
    enum pipe_format format = vk_format_to_pipe_format(vk_format);
 
-   /* For SNORM formats, copy them as the equivalent UNORM format.  If we treat
-    * them as snorm then the 0x80 (-1.0 snorm8) value will get clamped to 0x81
-    * (also -1.0), when we're supposed to be memcpying the bits. See
-    * https://gitlab.khronos.org/Tracker/vk-gl-cts/-/issues/2917 for discussion.
-    */
    format = util_format_snorm_to_unorm(format);
 
    if (vk_format == VK_FORMAT_E5B9G9R9_UFLOAT_PACK32)
       return PIPE_FORMAT_R32_UINT;
 
-   /* For VK_FORMAT_D32_SFLOAT_S8_UINT and YCbCr formats use our existing helpers */
    if (vk_format == VK_FORMAT_D32_SFLOAT_S8_UINT ||
        vk_format_get_ycbcr_info(vk_format))
       return tu_aspects_to_plane(vk_format, aspect_mask);
 
-   /* Otherwise, simply return the pipe_format */
    return format;
 }
 
@@ -2311,24 +2238,6 @@ tu7_generic_layer_clear(struct tu_cmd_buffer *cmd,
    event_blit_run<A7XX>(cmd, cs, att, &blt_view, separate_stencil);
 }
 
-
-
-/* Copies/fills/updates for buffers are happening through CCU but need
- * additional synchronization when write range is not aligned to 64 bytes.
- * Because dst buffer access uses either R8_UNORM or R32_UINT and they are not
- * coherent between each other in CCU since format seem to be a part of a
- * cache key.
- *
- * See: https://gitlab.khronos.org/vulkan/vulkan/-/issues/3306
- *
- * The synchronization with writes from UCHE (e.g. with SSBO stores) are
- * solved by the fact that UCHE has byte level dirtiness tracking and that CCU
- * flush would happen always before UCHE flush for such case (e.g. both
- * renderpass and dispatch would flush pending CCU write).
- *
- * Additionally see:
- * https://gitlab.khronos.org/vulkan/vulkan/-/issues/3398#note_400111
- */
 template <chip CHIP>
 static void
 handle_buffer_unaligned_store(struct tu_cmd_buffer *cmd,
@@ -2342,7 +2251,6 @@ handle_buffer_unaligned_store(struct tu_cmd_buffer *cmd,
    if ((dst_va & 63) || (size & 63)) {
       tu_flush_for_access(&cmd->state.cache, TU_ACCESS_NONE,
                           TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE);
-      /* Wait for invalidations to land. */
       cmd->state.cache.flush_bits |= TU_CMD_FLAG_WAIT_FOR_IDLE;
       tu_emit_cache_flush<CHIP>(cmd);
       *unaligned_store = true;
@@ -2370,13 +2278,6 @@ tu6_clear_lrz(struct tu_cmd_buffer *cmd,
 {
    const struct blit_ops *ops = &r2d_ops<CHIP>;
 
-   /* It is assumed that LRZ cache is invalidated at this point for
-    * the writes here to become visible to LRZ.
-    *
-    * LRZ writes are going through UCHE cache, flush UCHE before changing
-    * LRZ via CCU. Don't need to invalidate CCU since we are presumably
-    * writing whole cache lines we assume to be 64 bytes.
-    */
    tu_emit_event_write<CHIP>(cmd, &cmd->cs, FD_CACHE_CLEAN);
 
    const unsigned lrz_buffers = CHIP >= A7XX ? 2 : 1;
@@ -2396,9 +2297,6 @@ tu6_clear_lrz(struct tu_cmd_buffer *cmd,
       ops->teardown(cmd, cs);
    }
 
-   /* Clearing writes via CCU color in the PS stage, and LRZ is read via
-    * UCHE in the earlier GRAS stage.
-    */
    cmd->state.cache.flush_bits |=
       TU_CMD_FLAG_CCU_CLEAN_COLOR | TU_CMD_FLAG_CACHE_INVALIDATE |
       TU_CMD_FLAG_WAIT_FOR_IDLE;
@@ -2454,7 +2352,6 @@ tu_image_view_copy_blit(struct fdl6_view *iview,
 {
    VkImageAspectFlags aspect_mask = subres->aspectMask;
 
-   /* always use the AS_R8G8B8A8 format for these */
    if (format == PIPE_FORMAT_Z24_UNORM_S8_UINT ||
        format == PIPE_FORMAT_Z24X8_UNORM) {
       aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -2513,7 +2410,6 @@ tu6_blit_image(struct tu_cmd_buffer *cmd,
    bool z_scale = false;
    uint32_t layers = info->dstOffsets[1].z - info->dstOffsets[0].z;
 
-   /* 2D blit can't do rotation mirroring from just coordinates */
    static const enum a6xx_rotation rotate[2][2] = {
       {ROTATE_0, ROTATE_HFLIP},
       {ROTATE_VFLIP, ROTATE_180},
@@ -2545,14 +2441,6 @@ tu6_blit_image(struct tu_cmd_buffer *cmd,
                                                 &info->dstSubresource);
    }
 
-   /* BC1_RGB_* formats need to have their last components overriden with 1
-    * when sampling, which is normally handled with the texture descriptor
-    * swizzle. The 2d path can't handle that, so use the 3d path.
-    *
-    * TODO: we could use RB_A2D_BLT_CNTL::MASK to make these formats work with
-    * the 2d path.
-    */
-
    unsigned blit_param = rotate[mirror_y][mirror_x];
    if (dst_image->layout[0].nr_samples > 1 ||
        src_image->vk.format == VK_FORMAT_BC1_RGB_UNORM_BLOCK ||
@@ -2563,7 +2451,6 @@ tu6_blit_image(struct tu_cmd_buffer *cmd,
       blit_param = z_scale ? R3D_Z_SCALE : 0;
    }
 
-   /* use the right format in setup() for D32_S8 */
    enum pipe_format src_format = tu_aspects_to_plane(
       src_image->vk.format, info->srcSubresource.aspectMask);
    enum pipe_format dst_format = tu_aspects_to_plane(
@@ -2638,9 +2525,6 @@ tu_CmdBlitImage2(VkCommandBuffer commandBuffer,
    VK_FROM_HANDLE(tu_image, dst_image, pBlitImageInfo->dstImage);
 
    for (uint32_t i = 0; i < pBlitImageInfo->regionCount; ++i) {
-      /* can't blit both depth and stencil at once with D32_S8
-       * TODO: more advanced 3D blit path to support it instead?
-       */
       if (src_image->vk.format == VK_FORMAT_D32_SFLOAT_S8_UINT ||
           dst_image->vk.format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
          VkImageBlit2 region = pBlitImageInfo->pRegions[i];
@@ -2704,14 +2588,12 @@ tu_copy_buffer_to_image(struct tu_cmd_buffer *cmd,
       copy_format(dst_image->vk.format, info->imageSubresource.aspectMask);
    const struct blit_ops *ops = &r2d_ops<CHIP>;
 
-   /* special case for buffer to stencil */
    if (dst_image->vk.format == VK_FORMAT_D24_UNORM_S8_UINT &&
        info->imageSubresource.aspectMask == VK_IMAGE_ASPECT_STENCIL_BIT) {
       src_format = PIPE_FORMAT_S8_UINT;
    }
 
-   /* note: could use "R8_UNORM" when no UBWC */
-   bool has_unaligned = CHIP >= A7XX; /* If unaligned buffer copies are supported. */
+   bool has_unaligned = CHIP >= A7XX;
    unsigned blit_param = 0;
    if (src_format == PIPE_FORMAT_Y8_UNORM) {
       ops = &r3d_ops<CHIP>;
@@ -2748,9 +2630,6 @@ tu_copy_buffer_to_image(struct tu_cmd_buffer *cmd,
          for (uint32_t y = 0; y < extent.height; y++) {
             uint32_t x = (src_va & 63) / block_size;
             uint32_t excess_width = 0;
-            /* With VA aligning we can go over the maximum copy size
-             * and will have to do additional copy of the leftover.
-             */
             if (x + extent.width > MAX_VIEWPORT_SIZE) {
                excess_width = x + extent.width - MAX_VIEWPORT_SIZE;
                assert(excess_width < 64 / block_size);
@@ -2779,7 +2658,6 @@ tu_copy_buffer_to_image(struct tu_cmd_buffer *cmd,
          }
       } else {
          if constexpr (CHIP >= A7XX) {
-            /* Necessary to not trigger static assertion from A6XX variant. */
             if (has_unaligned) {
                r2d_src_buffer_unaligned<CHIP>(cmd, cs, src_format, src_va,
                                               pitch, extent.width,
@@ -2930,7 +2808,6 @@ tu_copy_image_to_buffer(struct tu_cmd_buffer *cmd,
       dst_format = PIPE_FORMAT_S8_UINT;
    }
 
-   /* note: could use "R8_UNORM" when no UBWC */
    unsigned blit_param = 0;
    if (dst_format == PIPE_FORMAT_Y8_UNORM) {
       ops = &r3d_ops<CHIP>;
@@ -2967,9 +2844,6 @@ tu_copy_image_to_buffer(struct tu_cmd_buffer *cmd,
          for (uint32_t y = 0; y < extent.height; y++) {
             uint32_t x = (dst_va & 63) / block_size;
             uint32_t excess_width = 0;
-            /* With VA aligning we can go over the maximum copy size
-             * and will have to do additional copy of the leftover.
-             */
             if (x + extent.width > MAX_VIEWPORT_SIZE) {
                excess_width = x + extent.width - MAX_VIEWPORT_SIZE;
                assert(excess_width < 64 / block_size);
@@ -3107,17 +2981,6 @@ tu_CopyImageToMemoryEXT(VkDevice _device,
    return VK_SUCCESS;
 }
 
-
-/* Tiled formats don't support swapping, which means that we can't support
- * formats that require a non-WZYX swap like B8G8R8A8 natively. Also, some
- * formats like B5G5R5A1 have a separate linear-only format when sampling.
- * Currently we fake support for tiled swapped formats and use the unswapped
- * format instead, but this means that reinterpreting copies to and from
- * swapped formats can't be performed correctly unless we can swizzle the
- * components by reinterpreting the other image as the "correct" swapped
- * format, i.e. only when the other image is linear.
- */
-
 template <chip CHIP>
 static bool
 is_swapped_format(enum pipe_format format, bool is_mutable)
@@ -3127,10 +2990,6 @@ is_swapped_format(enum pipe_format format, bool is_mutable)
    return linear.fmt != tiled.fmt || linear.swap != tiled.swap;
 }
 
-/* R8G8_* formats have a different tiling layout than other cpp=2 formats, and
- * therefore R8G8 images can't be reinterpreted as non-R8G8 images (and vice
- * versa). This should mirror the logic in fdl6_layout.
- */
 static bool
 image_is_r8g8(struct tu_image *image)
 {
@@ -3158,29 +3017,12 @@ tu_copy_image_to_image(struct tu_cmd_buffer *cmd,
                                   vk_image_subresource_layer_count(&src_image->vk,
                                                                    &info->srcSubresource));
 
-   /* From the Vulkan 1.2.140 spec, section 19.3 "Copying Data Between
-    * Images":
-    *
-    * When copying between compressed and uncompressed formats the extent
-    * members represent the texel dimensions of the source image and not
-    * the destination. When copying from a compressed image to an
-    * uncompressed image the image texel dimensions written to the
-    * uncompressed image will be source extent divided by the compressed
-    * texel block dimensions. When copying from an uncompressed image to a
-    * compressed image the image texel dimensions written to the compressed
-    * image will be the source extent multiplied by the compressed texel
-    * block dimensions.
-    *
-    * This means we only have to adjust the extent if the source image is
-    * compressed.
-    */
    copy_compressed(src_image->vk.format, &src_offset, &extent, NULL, NULL);
    copy_compressed(dst_image->vk.format, &dst_offset, NULL, NULL, NULL);
 
    enum pipe_format dst_format = copy_format(dst_image->vk.format, info->dstSubresource.aspectMask);
    enum pipe_format src_format = copy_format(src_image->vk.format, info->srcSubresource.aspectMask);
 
-   /* note: could use "R8_UNORM" when no UBWC */
    unsigned blit_param = 0;
    if (dst_format == PIPE_FORMAT_Y8_UNORM ||
        src_format == PIPE_FORMAT_Y8_UNORM) {
@@ -3191,51 +3033,28 @@ tu_copy_image_to_image(struct tu_cmd_buffer *cmd,
    bool use_staging_blit = false;
 
    if (src_format == dst_format) {
-      /* Images that share a format can always be copied directly because it's
-       * the same as a blit.
-       */
    } else if (src_format == PIPE_FORMAT_Z24_UNORM_S8_UINT &&
               util_format_get_blocksize(dst_format) == 1) {
-      /* If we're doing a narrowing copy from D24S8 to some R8 format we don't
-       * need a staging buffer but we need separate source and destination
-       * formats. Override the destination format to S8 so that we don't have
-       * to do this copy-specific reinterpretation deeper down the stack.
-       */
       dst_format = PIPE_FORMAT_S8_UINT;
    } else if (dst_format == PIPE_FORMAT_Z24_UNORM_S8_UINT &&
               util_format_get_blocksize(src_format) == 1) {
-      /* Same as above but for widening copies from R8_* to D24S8 stencil
-       * aspect.
-       */
       src_format = PIPE_FORMAT_S8_UINT;
    } else if (!src_image->layout[0].tile_mode) {
-      /* If an image is linear, we can always safely reinterpret it with the
-       * other image's format and then do a regular blit.
-       */
       src_format = dst_format;
    } else if (!dst_image->layout[0].tile_mode) {
       dst_format = src_format;
    } else if (image_is_r8g8(src_image) != image_is_r8g8(dst_image)) {
-      /* We can't currently copy r8g8 images to/from other cpp=2 images,
-       * due to the different tile layout.
-       */
       use_staging_blit = true;
    } else if (is_swapped_format<CHIP>(src_format,
                                       src_image->layout[0].is_mutable) ||
               is_swapped_format<CHIP>(dst_format,
                                       src_image->layout[0].is_mutable)) {
-      /* If either format has a non-identity swap, then we can't copy
-       * to/from it.
-       */
       use_staging_blit = true;
    } else if (!src_image->layout[0].ubwc || src_image->layout[0].is_mutable) {
       src_format = dst_format;
    } else if (!dst_image->layout[0].ubwc || src_image->layout[0].is_mutable) {
       dst_format = src_format;
    } else {
-      /* Both formats use UBWC and so neither can be reinterpreted.
-       * TODO: We could do an in-place decompression of the dst instead.
-       */
       perf_debug(cmd->device, "TODO: Do in-place UBWC decompression for UBWC->UBWC blits");
       use_staging_blit = true;
    }
@@ -3304,16 +3123,6 @@ tu_copy_image_to_image(struct tu_cmd_buffer *cmd,
          ops->run(cmd, cs);
       }
 
-      /* When executed by the user there has to be a pipeline barrier here,
-       * but since we're doing it manually we'll have to flush ourselves.
-       * Because we may reuse the staging buffer with different
-       * layouts/formats, we also have to invalidate CCU, which when executed
-       * by the user would be done before the next use of the staging buffer
-       * when transitioning from UNDEFINED. Here it's more optimal to
-       * invalidate right away after flushing instead of before the next copy
-       * using the staging buffer however, because we don't have to insert
-       * another WFI.
-       */
       tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_CLEAN_COLOR);
       tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_INVALIDATE_COLOR);
       tu_emit_event_write<CHIP>(cmd, cs, FD_CACHE_INVALIDATE);
@@ -3415,7 +3224,6 @@ tu_copy_image_to_image_cpu(struct tu_device *device,
                                   vk_image_subresource_layer_count(&src_image->vk,
                                                                    &info->srcSubresource));
 
-   /* See comment above. */
    copy_compressed(src_image->vk.format, &src_offset, &extent, NULL, NULL);
    copy_compressed(dst_image->vk.format, &dst_offset, NULL, NULL, NULL);
 
@@ -3490,9 +3298,6 @@ tu_copy_image_to_image_cpu(struct tu_device *device,
                                      dst_pitch,
                                      &device->physical_device->ubwc_config);
       } else {
-         /* Work tile-by-tile, holding the unswizzled tile in a temporary
-          * buffer.
-          */
          char temp_tile[256];
 
          uint32_t block_width, block_height;
@@ -3576,7 +3381,6 @@ tu_TransitionImageLayoutEXT(VkDevice device,
                             uint32_t transitionCount,
                             const VkHostImageLayoutTransitionInfoEXT *transitions)
 {
-   /* We don't do anything with layouts so this should be a no-op */
    return VK_SUCCESS;
 }
 
@@ -3639,10 +3443,6 @@ tu_CmdCopyBuffer2(VkCommandBuffer commandBuffer,
    VK_FROM_HANDLE(tu_buffer, src_buffer, pCopyBufferInfo->srcBuffer);
    VK_FROM_HANDLE(tu_buffer, dst_buffer, pCopyBufferInfo->dstBuffer);
 
-   /* Choose the largest common block size for all copy regions
-    * to prevent WaW hazards when potentially performing non-overlapping
-    * unaligned stores through CCU. See handle_buffer_unaligned_store.
-    */
    uint32_t block_size = 16;
    for (unsigned i = 0; i < pCopyBufferInfo->regionCount; ++i) {
       const VkBufferCopy2 *region = &pCopyBufferInfo->pRegions[i];
@@ -3690,7 +3490,6 @@ tu_CmdUpdateBuffer(VkCommandBuffer commandBuffer,
       return;
    }
 
-   /* As in tu_CmdCopyBuffer2(), the largest viable block size is used. */
    uint64_t alignment_target = dataSize | vk_buffer_address(&buffer->vk, dstOffset);
    uint32_t block_size = 1;
    if (!(alignment_target & 15))
@@ -3803,8 +3602,6 @@ tu_CmdResolveImage2(VkCommandBuffer commandBuffer,
                              vk_image_subresource_layer_count(&dst_image->vk,
                                                               &info->dstSubresource));
 
-      /* TODO: aspect masks possible ? */
-
       coords(ops, cmd, cs, info->dstOffset, info->srcOffset, info->extent);
 
       struct fdl6_view dst, src;
@@ -3839,7 +3636,6 @@ resolve_sysmem(struct tu_cmd_buffer *cmd,
 {
    const struct blit_ops *ops = &r2d_ops<CHIP>;
 
-   /* A2D does not support "unresolve". */
    if (dst->image->layout[0].nr_samples > 1) {
       ops = &r3d_ops<CHIP>;
    }
@@ -3890,11 +3686,23 @@ resolve_sysmem(struct tu_cmd_buffer *cmd,
 
    ops->teardown(cmd, cs);
 
-   /* Для A829: принудительный сброс CCU после resolve */
    uint32_t gpu_id = cmd->device->physical_device->dev_id.gpu_id;
-   if (gpu_id == 829) {
-      tu_force_ccu_flush_depth<CHIP>(cmd, cs, gpu_id);
-      tu_force_ccu_invalidate_depth<CHIP>(cmd, cs, gpu_id);
+   if (gpu_id == 829 && vk_format_is_depth_or_stencil(vk_dst_format)) {
+      if (CHIP >= A7XX) {
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 4);
+         tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = CACHE_FLUSH_TS,
+                                          .write_src = EV_WRITE_ALWAYSON,
+                                          .write_dst = EV_DST_RAM,
+                                          .write_enabled = true).value);
+         tu_cs_emit_qw(cs, 0);
+         tu_cs_emit(cs, 0);
+      } else {
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 4);
+         tu_cs_emit(cs, CP_EVENT_WRITE_0_EVENT(CACHE_FLUSH_TS));
+         tu_cs_emit_qw(cs, 0);
+         tu_cs_emit(cs, 0);
+      }
+      tu_cs_emit_wfi(cs);
    }
 
    trace_end_sysmem_resolve(&cmd->rp_trace, cs);
@@ -3938,18 +3746,12 @@ static uint32_t
 tu_resolve_group_include_buffer(struct tu_resolve_group *resolve_group,
                                 VkFormat format)
 {
-   /* Resolve groups are not usable on a6xx, so no pending resolve is
-    * established. The default value of 0 is returned as the buffer ID.
-    */
    if (CHIP == A6XX)
       return 0;
 
    resolve_group->pending_resolves = true;
 
    assert(format != VK_FORMAT_D32_SFLOAT_S8_UINT);
-   /* D24_UNORM_S8_UINT should be assigned the depth buffer type, regardless of
-    * whether depth, stencil or both are being resolved.
-    */
    if (vk_format_has_depth(format))
       return 0x8;
    if (vk_format_has_stencil(format))
@@ -3966,9 +3768,6 @@ tu_emit_resolve_group(struct tu_cmd_buffer *cmd,
                           struct tu_cs *cs,
                           struct tu_resolve_group *resolve_group)
 {
-   /* Resolve groups are not usable on A6XX, so that template instantiation
-    * should behave as a no-op.
-    */
    if (CHIP == A6XX || !resolve_group->pending_resolves)
       return;
 
@@ -4146,10 +3945,6 @@ use_generic_clear_for_image_clear(struct tu_cmd_buffer *cmd,
 {
    const struct fd_dev_info *info = cmd->device->physical_device->info;
    return info->props.has_generic_clear &&
-          /* Clearing VK_FORMAT_R8G8_* with fast-clear value, certain
-           * dimensions (e.g. 960x540), and having GMEM renderpass afterwards
-           * may lead to a GPU fault on A7XX.
-           */
           !(info->props.r8g8_faulty_fast_clear_quirk && image_is_r8g8(image));
 }
 
@@ -4183,7 +3978,6 @@ tu_CmdClearColorImage(VkCommandBuffer commandBuffer,
 
    bool use_generic_clear = use_generic_clear_for_image_clear(cmd, image);
    if (use_generic_clear) {
-      /* Generic clear doesn't go through CCU (or other caches). */
       cmd->state.cache.flush_bits |=
          TU_CMD_FLAG_CCU_INVALIDATE_COLOR | TU_CMD_FLAG_WAIT_FOR_IDLE;
       tu_emit_cache_flush<CHIP>(cmd);
@@ -4198,9 +3992,6 @@ tu_CmdClearColorImage(VkCommandBuffer commandBuffer,
 
    tu_emit_resolve_group<CHIP>(cmd, &cmd->cs, &resolve_group);
    if (use_generic_clear) {
-      /* This will emit CCU_RESOLVE_CLEAN which will ensure any future resolves
-       * proceed only after the just-emitted generic clears are complete.
-       */
       cmd->state.cache.flush_bits |= TU_CMD_FLAG_BLIT_CACHE_CLEAN;
       tu_emit_cache_flush<CHIP>(cmd);
    }
@@ -4221,7 +4012,6 @@ tu_CmdClearDepthStencilImage(VkCommandBuffer commandBuffer,
 
    bool use_generic_clear = use_generic_clear_for_image_clear(cmd, image);
    if (use_generic_clear) {
-      /* Generic clear doesn't go through CCU (or other caches). */
       cmd->state.cache.flush_bits |= TU_CMD_FLAG_CCU_INVALIDATE_COLOR |
                                      TU_CMD_FLAG_CCU_INVALIDATE_DEPTH |
                                      TU_CMD_FLAG_WAIT_FOR_IDLE;
@@ -4234,7 +4024,6 @@ tu_CmdClearDepthStencilImage(VkCommandBuffer commandBuffer,
       const VkImageSubresourceRange *range = &pRanges[i];
 
       if (image->vk.format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
-         /* can't clear both depth and stencil at once, split up the aspect mask */
          u_foreach_bit(b, range->aspectMask) {
             uint32_t buffer_id = 0;
             if (BIT(b) == VK_IMAGE_ASPECT_DEPTH_BIT)
@@ -4253,9 +4042,6 @@ tu_CmdClearDepthStencilImage(VkCommandBuffer commandBuffer,
 
    tu_emit_resolve_group<CHIP>(cmd, &cmd->cs, &resolve_group);
    if (use_generic_clear) {
-      /* This will emit CCU_RESOLVE_CLEAN which will ensure any future resolves
-       * proceed only after the just-emitted generic clears are complete.
-       */
       cmd->state.cache.flush_bits |= TU_CMD_FLAG_BLIT_CACHE_CLEAN;
       tu_emit_cache_flush<CHIP>(cmd);
    }
@@ -4264,23 +4050,11 @@ tu_CmdClearDepthStencilImage(VkCommandBuffer commandBuffer,
 }
 TU_GENX(tu_CmdClearDepthStencilImage);
 
-/* CmdClearAttachments uses the original color attachment index instead of the
- * remapped index used by the shader, and our MRTs use the remapped
- * indices, so we have to remap them. We should always be able to find a
- * shader attachment thanks to this VU:
- *
- *    VUID-vkCmdClearAttachments-colorAttachment-09503
- *    "The colorAttachment member of each element of pAttachments must not
- *    identify a color attachment that is currently mapped to
- *    VK_ATTACHMENT_UNUSED in commandBuffer via
- *    VkRenderingAttachmentLocationInfoKHR"
- */
 static unsigned
 remap_attachment(struct tu_cmd_buffer *cmd, unsigned a)
 {
    unsigned i = cmd->vk.dynamic_graphics_state.cal.color_map[a];
-   assert(i != MESA_VK_ATTACHMENT_UNUSED &&
-          "app violates VUID-vkCmdClearAttachments-colorAttachment-09503");
+   assert(i != MESA_VK_ATTACHMENT_UNUSED);
    return i;
 }
 
@@ -4308,9 +4082,6 @@ fdm_apply_sysmem_clear_coords(struct tu_cmd_buffer *cmd,
 
    VkExtent2D frag_area = tile->frag_areas[MIN2(state->view, views - 1)];
    VkRect2D bin = bins[MIN2(state->view, views - 1)];
-   /* On a7xx, GRAS_BIN_FOVEAT_OFFSET_* is applied per-viewport. We only use
-    * viewport 0 in the 3d blit so use offset 0.
-    */
    VkOffset2D hw_viewport_offset = hw_viewport_offsets[0];
 
    VkOffset2D offset = tu_fdm_per_bin_offset(frag_area, bin, common_bin_offset);
@@ -4350,7 +4121,6 @@ tu_clear_sysmem_attachments(struct tu_cmd_buffer *cmd,
                             uint32_t rect_count,
                             const VkClearRect *rects)
 {
-   /* the shader path here is special, it avoids changing MRT/etc state */
    const struct tu_subpass *subpass = cmd->state.subpass;
    const uint32_t mrt_count = subpass->color_count;
    struct tu_cs *cs = &cmd->draw_cs;
@@ -4390,20 +4160,11 @@ tu_clear_sysmem_attachments(struct tu_cmd_buffer *cmd,
       }
    }
 
-   /* We may not know the multisample count if there are no attachments, so
-    * just bail early to avoid corner cases later.
-    */
    if (clear_rts == 0 && !z_clear && !s_clear)
       return;
 
    trace_start_sysmem_clear_all(&cmd->rp_trace, cs, cmd, mrt_count, rect_count);
 
-   /* disable all draw states so they don't interfere
-    * TODO: use and re-use draw states
-    * we have to disable draw states individually to preserve
-    * input attachment states, because a secondary command buffer
-    * won't be able to restore them
-    */
    tu_cs_emit_pkt7(cs, CP_SET_DRAW_STATE, 3 * (TU_DRAW_STATE_COUNT - 2));
    for (uint32_t i = 0; i < TU_DRAW_STATE_COUNT; i++) {
       if (i == TU_DRAW_STATE_INPUT_ATTACHMENTS_GMEM ||
@@ -4425,7 +4186,6 @@ tu_clear_sysmem_attachments(struct tu_cmd_buffer *cmd,
                     cmd->state.subpass->samples,
                     cmd->state.subpass->samples);
 
-   /* Disable sample counting in order to not affect occlusion query. */
    tu_cs_emit_regs(cs, A6XX_RB_SAMPLE_COUNTER_CNTL(.disable = true));
 
    if (cmd->state.prim_generated_query_running_before_rp) {
@@ -4504,20 +4264,8 @@ tu_clear_sysmem_attachments(struct tu_cmd_buffer *cmd,
       tu_cs_set_writeable(cs, true);
 
    for (uint32_t i = 0; i < rect_count; i++) {
-      /* This should be true because of this valid usage for
-       * vkCmdClearAttachments:
-       *
-       *    "If the render pass instance this is recorded in uses multiview,
-       *    then baseArrayLayer must be zero and layerCount must be one"
-       */
       assert(!subpass->multiview_mask || rects[i].baseArrayLayer == 0);
 
-      /* a630 doesn't support multiview masks, which means that we can't use
-       * the normal multiview path without potentially recompiling a shader
-       * on-demand or using a more complicated variant that takes the mask as
-       * a const. Just use the layered path instead, since it shouldn't be
-       * much worse.
-       */
       for_each_layer(layer, subpass->multiview_mask, rects[i].layerCount)
       {
          if (cmd->state.fdm_enabled) {
@@ -4550,7 +4298,6 @@ tu_clear_sysmem_attachments(struct tu_cmd_buffer *cmd,
       }
    }
 
-   /* Re-enable sample counting. */
    tu_cs_emit_regs(cs, A6XX_RB_SAMPLE_COUNTER_CNTL(.disable = false));
 
    if (cmd->state.prim_generated_query_running_before_rp) {
@@ -4627,7 +4374,6 @@ fdm_apply_gmem_clear_coords(struct tu_cmd_buffer *cmd,
    }
 
    if (bin.extent.width == 0 && bin.extent.height == 0) {
-      /* clear a 0 area rectangle to skip this clear */
       tu_cs_emit_regs(cs,
                       A6XX_RB_RESOLVE_CNTL_1(.x = 1, .y = 1),
                       A6XX_RB_RESOLVE_CNTL_2(.x = 0, .y = 0));
@@ -4740,7 +4486,6 @@ tu_clear_gmem_attachments(struct tu_cmd_buffer *cmd,
             tu_create_fdm_bin_patchpoint(cmd, cs, 3, TU_FDM_SKIP_BINNING,
                                          fdm_apply_gmem_clear_coords, state);
          } else {
-            /* We need to patch the clear rectangle for each view. */
             fdm_rect = &rects[i].rect;
          }
       } else {
@@ -4786,31 +4531,14 @@ tu_clear_attachments(struct tu_cmd_buffer *cmd,
    struct tu_cs *cs = &cmd->draw_cs;
    const struct tu_subpass *subpass = cmd->state.subpass;
 
-   /* sysmem path behaves like a draw, note we don't have a way of using different
-    * flushes for sysmem/gmem, so this needs to be outside of the cond_exec
-    */
    tu_emit_cache_flush_renderpass<CHIP>(cmd);
 
-   /* vkCmdClearAttachments is supposed to respect the predicate if active. The
-    * easiest way to do this is to always use the 3d path, which always works
-    * even with GMEM because it's just a simple draw using the existing
-    * attachment state.
-    *
-    * Similarly, we also use the 3D path when in a secondary command buffer that
-    * doesn't know the GMEM layout that will be chosen by the primary.
-    *
-    * Don't use the GMEM path if we are in a custom resolve.
-    */
    if (cmd->state.predication_active || cmd->state.gmem_layout == TU_GMEM_LAYOUT_COUNT ||
        subpass->custom_resolve) {
       tu_clear_sysmem_attachments<CHIP>(cmd, attachmentCount, pAttachments, rectCount, pRects);
       return;
    }
 
-   /* If we could skip tile load/stores based on any draws intersecting them at
-    * binning time, then emit the clear as a 3D draw so that it contributes to
-    * that visibility.
-   */
    for (uint32_t i = 0; i < attachmentCount; i++) {
       uint32_t a;
       if (pAttachments[i].aspectMask & VK_IMAGE_ASPECT_COLOR_BIT) {
@@ -4828,7 +4556,6 @@ tu_clear_attachments(struct tu_cmd_buffer *cmd,
       }
    }
 
-   /* Otherwise, emit 2D blits for gmem rendering. */
    tu_cond_exec_start(cs, CP_COND_EXEC_0_RENDER_MODE_GMEM);
    tu_clear_gmem_attachments<CHIP>(cmd, attachmentCount, pAttachments, rectCount, pRects);
    tu_cond_exec_end(cs);
@@ -4928,9 +4655,6 @@ tu_clear_attachments_generic(struct tu_cmd_buffer *cmd,
       clear_aspects |= pAttachments[i].aspectMask;
    }
 
-   /* Generic clear doesn't go through CCU (or other caches),
-    * so we have to flush (clean+invalidate) corresponding caches.
-    */
    tu_cond_exec_start(cs, CP_COND_EXEC_0_RENDER_MODE_SYSMEM);
    if (clear_aspects & VK_IMAGE_ASPECT_COLOR_BIT) {
       tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 1);
@@ -4988,10 +4712,6 @@ tu_CmdClearAttachments(VkCommandBuffer commandBuffer,
    }
 
    if (cmd->device->physical_device->info->props.has_generic_clear &&
-       /* Both having predication and not knowing layout could be solved
-        * by cs patching, which is exactly what prop driver is doing.
-        * We don't implement it because we don't expect a reasonable impact.
-        */
        !(cmd->state.predication_active ||
          cmd->state.gmem_layout == TU_GMEM_LAYOUT_COUNT)) {
       tu_clear_attachments_generic(cmd, attachmentCount, pAttachments, rectCount, pRects);
@@ -5070,11 +4790,23 @@ clear_sysmem_attachment(struct tu_cmd_buffer *cmd,
 
    ops->teardown(cmd, cs);
 
-   /* Для A829: принудительный сброс CCU после очистки sysmem */
    uint32_t gpu_id = cmd->device->physical_device->dev_id.gpu_id;
-   if (gpu_id == 829) {
-      tu_force_ccu_flush_depth<CHIP>(cmd, cs, gpu_id);
-      tu_force_ccu_invalidate_depth<CHIP>(cmd, cs, gpu_id);
+   if (gpu_id == 829 && vk_format_is_depth_or_stencil(vk_format)) {
+      if (CHIP >= A7XX) {
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 4);
+         tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = CACHE_FLUSH_TS,
+                                          .write_src = EV_WRITE_ALWAYSON,
+                                          .write_dst = EV_DST_RAM,
+                                          .write_enabled = true).value);
+         tu_cs_emit_qw(cs, 0);
+         tu_cs_emit(cs, 0);
+      } else {
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 4);
+         tu_cs_emit(cs, CP_EVENT_WRITE_0_EVENT(CACHE_FLUSH_TS));
+         tu_cs_emit_qw(cs, 0);
+         tu_cs_emit(cs, 0);
+      }
+      tu_cs_emit_wfi(cs);
    }
 
    trace_end_sysmem_clear(&cmd->rp_trace, cs);
@@ -5106,15 +4838,6 @@ tu_clear_sysmem_attachment(struct tu_cmd_buffer *cmd,
                               a, false);
    }
 
-   /* The spec doesn't explicitly say, but presumably the initial renderpass
-    * clear is considered part of the renderpass, and therefore barriers
-    * aren't required inside the subpass/renderpass.  Therefore we need to
-    * flush CCU color into CCU depth here, just like with
-    * vkCmdClearAttachments(). Note that because this only happens at the
-    * beginning of a renderpass, and renderpass writes are considered
-    * "incoherent", we shouldn't have to worry about syncing depth into color
-    * beforehand as depth should already be flushed.
-    */
    if (vk_format_is_depth_or_stencil(attachment->format)) {
       tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_CLEAN_COLOR);
       tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_CLEAN_DEPTH);
@@ -5207,15 +4930,10 @@ tu7_generic_clear_attachment(struct tu_cmd_buffer *cmd,
    trace_end_generic_clear(&cmd->rp_trace, cs);
 }
 
-/* Transform the render area from framebuffer space to subsampled space. Be
- * conservative if the render area partially covers a fragment.
- */
 static VkRect2D
 transform_render_area(VkRect2D render_area, const struct tu_tile_config *tile,
                       const VkRect2D *bins, unsigned view)
 {
-   /* Calculate transform from framebuffer space to subsampled space.
-    */
    VkExtent2D frag_area = (tile->subsampled_views & (1u << view)) ?
       tile->frag_areas[view] : (VkExtent2D) { 1, 1 };
 
@@ -5226,9 +4944,6 @@ transform_render_area(VkRect2D render_area, const struct tu_tile_config *tile,
          bins[view].offset.y / frag_area.height,
    };
 
-   /* In the unlikely case subsampling was disabled due to running out of
-    * tiles, don't transform the render area.
-    */
    if (!tile->subsampled)
       offset = (VkOffset2D) { 0, 0 };
 
@@ -5277,10 +4992,6 @@ fdm_apply_blit_scissor(struct tu_cmd_buffer *cmd,
 
    VkRect2D scissor = subsampled_render_area;
    if (tile->subsampled) {
-      /* Intersect the render area with the subsampled tile. We don't want to
-       * store the whole unscaled tile, and the unscaled tile may jut into the
-       * next tile.
-       */
       scissor.offset.x = MAX2(scissor.offset.x, tile->subsampled_pos[view].offset.x);
       scissor.offset.y = MAX2(scissor.offset.y, tile->subsampled_pos[view].offset.y);
       scissor.extent.width =
@@ -5302,10 +5013,6 @@ fdm_apply_blit_scissor(struct tu_cmd_buffer *cmd,
       tu_cs_emit_regs(cs,
                       A6XX_RB_RESOLVE_WINDOW_OFFSET(.x = 0, .y = 0));
    } else {
-      /* Note: we will not dynamically enable CCU_RESOLVE for stores unless the
-       * offset is aligned, but this patchpoint will be executed anyway so we
-       * have to do something and not assert in the builder.
-       */
       uint32_t x1 = scissor.offset.x &
          ~(phys_dev->info->gmem_align_w - 1);
       uint32_t y1 = scissor.offset.y &
@@ -5341,9 +5048,6 @@ tu_emit_blit(struct tu_cmd_buffer *cmd,
    assert(blit_event_type != BLIT_EVENT_CLEAR);
    uint32_t clear_mask = 0;
 
-   /* BLIT_EVENT_STORE_AND_CLEAR would presumably swallow the
-    * BLIT_EVENT_CLEAR at the start of a renderpass, and be more efficient.
-    */
    if (blit_event_type == BLIT_EVENT_STORE && clear_value &&
        attachment->clear_mask &&
        use_generic_clear_for_image_clear(cmd, iview->image)) {
@@ -5406,24 +5110,13 @@ blit_can_resolve(VkFormat format)
 {
    const struct util_format_description *desc = vk_format_description(format);
 
-   /* blit event can only do resolve for simple cases:
-    * averaging samples as unsigned integers or choosing only one sample
-    * Note this is allowed for SRGB formats, but results differ from 2D draw resolve
-    */
    if (vk_format_is_snorm(format))
       return false;
 
-   /* can't do formats with larger channel sizes
-    * note: this includes all float formats
-    * note2: single channel integer formats seem OK
-    */
    if (desc->channel[0].size > 10 && vk_format_is_color(format))
       return false;
 
    switch (format) {
-   /* for unknown reasons blit event can't msaa resolve these formats when tiled
-    * likely related to these formats having different layout from other cpp=2 formats
-    */
    case VK_FORMAT_R8G8_UNORM:
    case VK_FORMAT_R8G8_UINT:
    case VK_FORMAT_R8G8_SINT:
@@ -5455,9 +5148,6 @@ fdm_apply_load_coords(struct tu_cmd_buffer *cmd,
       (const struct apply_load_coords_state *)data;
    VkExtent2D frag_area = tile->frag_areas[MIN2(state->view, views - 1)];
    VkRect2D bin = bins[MIN2(state->view, views - 1)];
-   /* On a7xx, GRAS_BIN_FOVEAT_OFFSET_* is applied per-viewport. We only use
-    * viewport 0 in the 3d blit so use offset 0.
-    */
    VkOffset2D hw_viewport_offset = hw_viewport_offsets[0];
 
    assert(bin.extent.width % frag_area.width == 0);
@@ -5486,12 +5176,7 @@ load_3d_blit(struct tu_cmd_buffer *cmd,
              bool separate_stencil)
 {
    if (CHIP >= A7XX && vk_format_is_depth_or_stencil(att->format)) {
-      /* Workaround for when concurrent resolve is enabled.
-       * We have to wait until all CP_EVENT_WRITE::BLIT are completed,
-       * otherwise writing to depth image as color confuses HW.
-       */
       tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_CLEAN_BLIT_CACHE);
-      /* WFI happens later below. */
    }
 
    const struct tu_framebuffer *fb = cmd->state.framebuffer;
@@ -5512,12 +5197,8 @@ load_3d_blit(struct tu_cmd_buffer *cmd,
                  (VkExtent2D) { fb->width, fb->height });
    }
 
-   /* Normal loads read directly from system memory, so we have to invalidate
-    * UCHE in case it contains stale data.
-    */
    tu_emit_event_write<CHIP>(cmd, cs, FD_CACHE_INVALIDATE);
 
-   /* Wait for CACHE_INVALIDATE to land */
    tu_cs_emit_wfi(cs);
 
    for_each_layer(i, att->used_views, cmd->state.framebuffer->layers) {
@@ -5545,12 +5226,6 @@ load_3d_blit(struct tu_cmd_buffer *cmd,
 
    r3d_teardown<CHIP>(cmd, cs);
 
-   /* It seems we need to WFI here for depth/stencil because color writes here
-    * aren't synchronized with depth/stencil writes.
-    *
-    * Note: the blob also uses a WFI for color attachments but this hasn't
-    * been seen to be necessary.
-    */
    if (vk_format_is_depth_or_stencil(att->format))
       tu_cs_emit_wfi(cs);
 }
@@ -5624,21 +5299,12 @@ tu_load_gmem_attachment(struct tu_cmd_buffer *cmd,
 
    trace_start_gmem_load(&cmd->rp_trace, cs, cmd, attachment->format, force_load);
 
-   /* If attachment will be cleared by vkCmdClearAttachments - it is likely
-    * that it would be partially cleared, and since it is done by 2d blit
-    * it doesn't produce geometry, so we have to unconditionally load.
-    *
-    * To simplify conditions treat partially cleared separate DS as fully
-    * cleared and don't emit cond_exec.
-    */
    bool cond_exec = cond_exec_allowed && attachment->cond_load_allowed;
    if (cond_exec)
       tu_begin_load_store_cond_exec(cmd, cs, true);
 
    if (TU_DEBUG(3D_LOAD) ||
        cmd->state.pass->has_fdm ||
-       /* Replicating unresolve seems to not work and the blob never uses it.
-        */
        (a != gmem_a)) {
       if (load_common || load_stencil)
          tu_disable_draw_states(cmd, cs);
@@ -5694,12 +5360,6 @@ store_cp_blit(struct tu_cmd_buffer *cmd,
       r2d_dst<CHIP>(cs, &dst_iview->view, layer, src_format);
    }
 
-   /* Note: we compute the swap here instead of using the color_swap as
-    * programmed when we setup the color attachment because the attachment in
-    * GMEM ignores the swap except when MUTABLEEN is enabled. If the
-    * color attachment is linear, we need to use the identity swap even if the
-    * original attachment has a non-identity swap.
-    */
    struct tu_native_format fmt =
       blit_format_texture<CHIP>(src_format, TILE6_2,
                                 src_iview->view.is_mutable, true);
@@ -5709,10 +5369,6 @@ store_cp_blit(struct tu_cmd_buffer *cmd,
    uint32_t src_width = dst_iview->vk.extent.width;
    uint32_t src_height = dst_iview->vk.extent.height;
 
-   /* With FDM offset, we may blit from an extra row/column of tiles whose
-    * source coordinates are outside of the attachment. Add an extra tile
-    * width/height to the size to avoid clipping the source.
-    */
    if (tu_enable_fdm_offset(cmd)) {
       const struct tu_tiling_config *tiling = cmd->state.tiling;
       src_width += tiling->tile0.width;
@@ -5721,9 +5377,6 @@ store_cp_blit(struct tu_cmd_buffer *cmd,
 
    uint64_t va = gmem_offset;
    if (CHIP < A8XX) {
-      /* For gen8, address is simply gmem_offset if tile_mode is gmem
-       * tiling (TILE6_2)
-       */
       va += cmd->device->physical_device->gmem_base;
    }
 
@@ -5745,23 +5398,14 @@ store_cp_blit(struct tu_cmd_buffer *cmd,
                    TPL1_A2D_SRC_TEXTURE_BASE(CHIP, .qword = va),
                    TPL1_A2D_SRC_TEXTURE_PITCH(CHIP, .pitch = cmd->state.tiling->tile0.width * cpp));
 
-   /* sync GMEM writes with CACHE. */
    tu_emit_event_write<CHIP>(cmd, cs, FD_CACHE_INVALIDATE);
    if (CHIP >= A7XX)
-      /* On A7XX, we need to wait for any CP_EVENT_WRITE::BLIT operations
-       * arising from GMEM load/clears to land before we can continue.
-       */
       tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_CLEAN_BLIT_CACHE);
 
-   /* Wait for cache event to land */
    tu_cs_emit_wfi(cs);
 
    r2d_run(cmd, cs);
 
-   /* CP_BLIT writes to the CCU, unlike CP_EVENT_WRITE::BLIT which writes to
-    * sysmem, and we generally assume that GMEM renderpasses leave their
-    * results in sysmem, so we need to flush manually here.
-    */
    tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_CLEAN_COLOR);
 }
 
@@ -5780,12 +5424,6 @@ store_3d_blit(struct tu_cmd_buffer *cmd,
               uint32_t gmem_offset,
               uint32_t cpp)
 {
-   /* RB_CNTL/GRAS_SC_BIN_CNTL are normally only set once and they
-    * aren't set until we know whether we're HW binning or not, and we want to
-    * avoid a dependence on that here to be able to store attachments before
-    * the end of the renderpass in the future. Use the scratch space to
-    * save/restore them dynamically.
-    */
    tu_cs_emit_pkt7(cs, CP_REG_TO_SCRATCH, 1);
    tu_cs_emit(cs, CP_REG_TO_SCRATCH_0_REG(RB_CNTL(CHIP).reg) |
                   CP_REG_TO_SCRATCH_0_SCRATCH(0) |
@@ -5814,24 +5452,16 @@ store_3d_blit(struct tu_cmd_buffer *cmd,
 
    r3d_src_gmem<CHIP>(cmd, cs, src_iview, src_format, dst_format, gmem_offset, cpp);
 
-   /* sync GMEM writes with CACHE. */
    tu_emit_event_write<CHIP>(cmd, cs, FD_CACHE_INVALIDATE);
 
-   /* Wait for CACHE_INVALIDATE to land */
    tu_cs_emit_wfi(cs);
 
    r3d_run(cmd, cs);
 
    r3d_teardown<CHIP>(cmd, cs);
 
-   /* Draws write to the CCU, unlike CP_EVENT_WRITE::BLIT which writes to
-    * sysmem, and we generally assume that GMEM renderpasses leave their
-    * results in sysmem, so we need to flush manually here. The 3d blit path
-    * writes to depth images as a color RT, so there's no need to flush depth.
-    */
    tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_CLEAN_COLOR);
 
-   /* Restore RB_CNTL/GRAS_SC_BIN_CNTL saved above. */
    tu_cs_emit_pkt7(cs, CP_SCRATCH_TO_REG, 1);
    tu_cs_emit(cs, CP_SCRATCH_TO_REG_0_REG(RB_CNTL(CHIP).reg) |
                   CP_SCRATCH_TO_REG_0_SCRATCH(0) |
@@ -5856,17 +5486,12 @@ tu_attachment_store_unaligned(struct tu_cmd_buffer *cmd, uint32_t a)
    struct tu_physical_device *phys_dev = cmd->device->physical_device;
    const struct tu_image_view *iview = cmd->state.attachments[a];
 
-   /* Unaligned store is incredibly rare in CTS, we have to force it to test. */
    if (TU_DEBUG(UNALIGNED_STORE))
       return true;
 
    unsigned render_area_count =
       cmd->state.per_layer_render_area ? cmd->state.pass->num_views : 1;
 
-   /* With subsampling, the formula below doesn't work, but we already
-    * conditionally use A2D for the unaligned blits at the edge. Just return
-    * false here.
-    */
    if (cmd->state.fdm_subsampled)
       return false;
 
@@ -5876,10 +5501,6 @@ tu_attachment_store_unaligned(struct tu_cmd_buffer *cmd, uint32_t a)
       uint32_t y1 = render_area->offset.y;
       uint32_t x2 = x1 + render_area->extent.width;
       uint32_t y2 = y1 + render_area->extent.height;
-      /* x2/y2 can be unaligned if equal to the size of the image, since it will
-       * write into padding space. The one exception is linear levels which don't
-       * have the required y padding in the layout (except for the last level)
-       */
       bool need_y2_align =
          y2 != iview->view.height || iview->view.need_y2_align;
 
@@ -5893,7 +5514,6 @@ tu_attachment_store_unaligned(struct tu_cmd_buffer *cmd, uint32_t a)
    return false;
 }
 
-/* The fast path cannot handle mismatched mutability. */
 static bool
 tu_attachment_store_mismatched_mutability(struct tu_cmd_buffer *cmd, uint32_t a,
                                           uint32_t gmem_a)
@@ -5907,12 +5527,6 @@ tu_attachment_store_mismatched_mutability(struct tu_cmd_buffer *cmd, uint32_t a,
    return dst_iview->view.is_mutable != src_iview->view.is_mutable;
 }
 
-/* Choose the GMEM layout (use the CCU space or not) based on whether the
- * current attachments will need.  This has to happen at vkBeginRenderPass()
- * time because tu_attachment_store_unaligned() looks at the image views, which
- * are only available at that point.  This should match the logic for the
- * !use_fast_path case in tu_store_gmem_attachment().
- */
 void
 tu_choose_gmem_layout(struct tu_cmd_buffer *cmd)
 {
@@ -5931,9 +5545,6 @@ tu_choose_gmem_layout(struct tu_cmd_buffer *cmd)
           tu_attachment_store_unaligned(cmd, i))
          cmd->state.gmem_layout = TU_GMEM_LAYOUT_AVOID_CCU;
       if (att->store && att->format == VK_FORMAT_S8_UINT)
-         /* We cannot pick out S8 from D24S8/D32S8, so we conservatively disable
-          * blit events for the S8_UINT format.
-          */
          cmd->state.gmem_layout = TU_GMEM_LAYOUT_AVOID_CCU;
       if (att->will_be_resolved && !blit_can_resolve(att->format))
          cmd->state.gmem_layout = TU_GMEM_LAYOUT_AVOID_CCU;
@@ -5981,11 +5592,6 @@ fdm_apply_store_coords(struct tu_cmd_buffer *cmd,
    VkExtent2D frag_area = tile->frag_areas[view];
    VkRect2D bin = bins[view];
 
-   /* The bin width/height must be a multiple of the frag_area to make sure
-    * that the scaling happens correctly. This means there may be some
-    * destination pixels jut out of the framebuffer, but they should be
-    * clipped by the render area.
-    */
    assert(bin.extent.width % frag_area.width == 0);
    assert(bin.extent.height % frag_area.height == 0);
    uint32_t scaled_width = bin.extent.width / frag_area.width;
@@ -6004,9 +5610,6 @@ fdm_apply_store_coords(struct tu_cmd_buffer *cmd,
       VkOffset2D start =
          tile->subsampled ? tile->subsampled_pos[view].offset : bin.offset;
       if (tile->subsampled_views & (1u << view)) {
-         /* Subsampled blits don't scale up the bin, and go to the subsampled
-          * destination.
-          */
          tu_cs_emit_regs(cs,
             GRAS_A2D_DEST_TL(CHIP, .x = start.x, .y = start.y),
             GRAS_A2D_DEST_BR(CHIP, .x = start.x + scaled_width - 1,
@@ -6092,17 +5695,10 @@ tu_store_gmem_attachment(struct tu_cmd_buffer *cmd,
    bool mismatched_mutability =
       tu_attachment_store_mismatched_mutability(cmd, a, gmem_a);
 
-   /* D32_SFLOAT_S8_UINT is quite special format: it has two planes,
-    * one for depth and other for stencil. When resolving a MSAA
-    * D32_SFLOAT_S8_UINT to S8_UINT, we need to take that into account.
-    */
    bool resolve_d32s8_s8 =
       src->format == VK_FORMAT_D32_SFLOAT_S8_UINT &&
       dst->format == VK_FORMAT_S8_UINT;
 
-   /* The fast path doesn't support picking out the last component of a D24S8
-    * texture reinterpreted as RGBA8_UNORM.
-    */
    bool resolve_d24s8_s8 =
       src->format == VK_FORMAT_D24_UNORM_S8_UINT &&
       dst->format == VK_FORMAT_S8_UINT;
@@ -6119,15 +5715,11 @@ tu_store_gmem_attachment(struct tu_cmd_buffer *cmd,
 
    trace_start_gmem_store(&cmd->rp_trace, cs, cmd, dst->format, use_fast_path, unaligned);
 
-   /* Unconditional store should happen only if attachment was cleared,
-    * which could have happened either by load_op or via vkCmdClearAttachments.
-    */
    bool cond_exec = cond_exec_allowed && src->cond_store_allowed;
    if (cond_exec) {
       tu_begin_load_store_cond_exec(cmd, cs, false);
    }
 
-   /* use fast path when render area is aligned, except for unsupported resolve cases */
    if (use_fast_path) {
       if (fast_path_conditional) {
          tu_cond_exec_start(cs, CP_COND_REG_EXEC_0_MODE(PRED_TEST) |
@@ -6169,13 +5761,6 @@ tu_store_gmem_attachment(struct tu_cmd_buffer *cmd,
       dst_format = PIPE_FORMAT_Z32_FLOAT;
 
    if (dst->samples > 1) {
-      /* If we hit this path, we have to disable draw states after every tile
-       * instead of once at the end of the renderpass, so that they aren't
-       * executed when calling CP_DRAW.
-       *
-       * TODO: store a flag somewhere so we don't do this more than once and
-       * don't do it after the renderpass when this happens.
-       */
       if (store_common || store_separate_stencil)
          tu_disable_draw_states(cmd, cs);
 
@@ -6200,13 +5785,6 @@ tu_store_gmem_attachment(struct tu_cmd_buffer *cmd,
             r2d_coords<CHIP>(cmd, cs, render_area->offset, render_area->offset,
                              render_area->extent);
          } else if (!cmd->state.fdm_subsampled) {
-            /* Usually GRAS_2D_RESOLVE_CNTL_* clips the destination to the bin
-             * area and the coordinates span the entire render area, but for
-             * FDM we need to scale the coordinates so we need to take the
-             * opposite aproach, specifying the exact bin size in the destination
-             * coordinates and using GRAS_2D_RESOLVE_CNTL_* to clip to the render
-             * area.
-             */
             tu_cs_emit_regs(cs,
                             GRAS_A2D_SCISSOR_TL(CHIP, .x = render_area->offset.x,
                                                       .y = render_area->offset.y,),
