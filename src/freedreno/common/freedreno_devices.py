@@ -1307,7 +1307,6 @@ a8xx_base = GPUProps(
         has_compliant_dp4acc = True,
         has_scalar_alu = True,
         has_scalar_predicates = True,
-        has_dual_wave_dispatch = True,
         has_sad = True,
         has_ssbo_imm_offsets = True,
         has_64b_ssbo_atomics = True,
