@@ -1534,7 +1534,8 @@ add_gpus([
             disable_gmem = False,
             gmem_size = 2 * 1024 * 1024,
             shading_rate_matches_vk = True, #Экспериментально!!!
-            has_ray_intersection = False,  #Отключил, т.к. для производительности откобченно и на Adreno 829
+            has_ray_intersection = False, 
+            enable_tp_ubwc_flag_hint = True,
             
         )],
         num_ccu = 4,
@@ -1586,6 +1587,7 @@ add_gpus([
              shading_rate_matches_vk = True, # Походу это поддерживает вся 8 Серия
              disable_gmem = False, # Экспериментально
              gmem_size = 2 * 1024 * 1024
+            enable_tp_ubwc_flag_hint = True,
         )],
         num_ccu = 4,
         num_slices = 2,
