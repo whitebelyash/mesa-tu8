@@ -30,6 +30,67 @@
 
 static const VkOffset2D blt_no_coord = { ~0, ~0 };
 
+/* ========== ФОРСИРОВАННЫЙ СБРОС CCU ДЛЯ A8XX ========== */
+
+template <chip CHIP>
+static void
+tu_force_ccu_flush_depth(struct tu_cmd_buffer *cmd, struct tu_cs *cs, uint32_t gpu_id)
+{
+   /* Для A829 с большим кэшем глубины (192KB) нужен принудительный сброс */
+   if (gpu_id == 829) {
+      /* Полный сброс кэша глубины и цвета */
+      if (CHIP >= A7XX) {
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 1);
+         tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = CCU_FLUSH_DEPTH_TS).value);
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 1);
+         tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = CCU_FLUSH_COLOR_TS).value);
+      } else {
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 1);
+         tu_cs_emit(cs, CP_EVENT_WRITE_0_EVENT(CCU_FLUSH_DEPTH_TS));
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 1);
+         tu_cs_emit(cs, CP_EVENT_WRITE_0_EVENT(CCU_FLUSH_COLOR_TS));
+      }
+      /* Ждём завершения сброса */
+      tu_cs_emit_wfi(cs);
+   }
+}
+
+/* Принудительная инвалидация кэша CCU после операций */
+template <chip CHIP>
+static void
+tu_force_ccu_invalidate_depth(struct tu_cmd_buffer *cmd, struct tu_cs *cs, uint32_t gpu_id)
+{
+   if (gpu_id == 829) {
+      if (CHIP >= A7XX) {
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 1);
+         tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = CCU_INVALIDATE_DEPTH).value);
+      } else {
+         tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 1);
+         tu_cs_emit(cs, CP_EVENT_WRITE_0_EVENT(CCU_INVALIDATE_DEPTH));
+      }
+   }
+}
+
+/* Проверка, нужно ли использовать 3D путь для очистки глубины на A8XX */
+static bool
+tu_need_3d_depth_clear(struct tu_cmd_buffer *cmd, enum pipe_format format)
+{
+   uint32_t gpu_id = cmd->device->physical_device->dev_id.gpu_id;
+   
+   /* Для всех A8XX отключаем fast clear для depth/stencil форматов */
+   if (gpu_id >= 810 && gpu_id <= 849) {
+      if (format == PIPE_FORMAT_Z32_FLOAT ||
+          format == PIPE_FORMAT_Z16_UNORM ||
+          format == PIPE_FORMAT_Z24_UNORM_S8_UINT ||
+          format == PIPE_FORMAT_Z32_FLOAT_S8X24_UINT) {
+         return true;
+      }
+   }
+   return false;
+}
+
+/* ========== КОНЕЦ ФОРСИРОВАННОГО СБРОСА ========== */
+
 static uint32_t
 tu_pack_float32_for_unorm(float val, int bits)
 {
@@ -470,6 +531,16 @@ r2d_setup_common(struct tu_cmd_buffer *cmd,
                  bool ubwc,
                  bool scissor)
 {
+   uint32_t gpu_id = cmd->device->physical_device->dev_id.gpu_id;
+   
+   /* Для A8XX отключаем fast clear для depth/stencil форматов */
+   bool force_3d_clear = tu_need_3d_depth_clear(cmd, dst_format);
+   
+   if (force_3d_clear && clear) {
+      /* Для A8XX используем 3D путь вместо 2D fast clear */
+      return;
+   }
+
    if (!cmd->state.pass && cmd->device->dbg_renderpass_stomp_cs) {
       tu_cs_emit_call(cs, cmd->device->dbg_renderpass_stomp_cs);
    }
@@ -563,7 +634,13 @@ static void
 r2d_teardown(struct tu_cmd_buffer *cmd,
              struct tu_cs *cs)
 {
-   /* nothing to do here */
+   /* Для A829 форсируем сброс CCU после 2D операций */
+   uint32_t gpu_id = cmd->device->physical_device->dev_id.gpu_id;
+   
+   if (gpu_id == 829) {
+      TU_CALLX(cmd->device, tu_force_ccu_flush_depth)(cmd, cs, gpu_id);
+      TU_CALLX(cmd->device, tu_force_ccu_invalidate_depth)(cmd, cs, gpu_id);
+   }
 }
 
 static void
@@ -1859,6 +1936,14 @@ template <chip CHIP>
 static void
 r3d_teardown(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
 {
+   uint32_t gpu_id = cmd->device->physical_device->dev_id.gpu_id;
+   
+   /* Для A829 форсируем сброс CCU после 3D операций */
+   if (gpu_id == 829) {
+      tu_force_ccu_flush_depth<CHIP>(cmd, cs, gpu_id);
+      tu_force_ccu_invalidate_depth<CHIP>(cmd, cs, gpu_id);
+   }
+   
    if (cmd->state.predication_active) {
       tu_cs_emit_pkt7(cs, CP_DRAW_PRED_ENABLE_LOCAL, 1);
       tu_cs_emit(cs, 1);
@@ -3076,15 +3161,15 @@ tu_copy_image_to_image(struct tu_cmd_buffer *cmd,
    /* From the Vulkan 1.2.140 spec, section 19.3 "Copying Data Between
     * Images":
     *
-    *    When copying between compressed and uncompressed formats the extent
-    *    members represent the texel dimensions of the source image and not
-    *    the destination. When copying from a compressed image to an
-    *    uncompressed image the image texel dimensions written to the
-    *    uncompressed image will be source extent divided by the compressed
-    *    texel block dimensions. When copying from an uncompressed image to a
-    *    compressed image the image texel dimensions written to the compressed
-    *    image will be the source extent multiplied by the compressed texel
-    *    block dimensions.
+    * When copying between compressed and uncompressed formats the extent
+    * members represent the texel dimensions of the source image and not
+    * the destination. When copying from a compressed image to an
+    * uncompressed image the image texel dimensions written to the
+    * uncompressed image will be source extent divided by the compressed
+    * texel block dimensions. When copying from an uncompressed image to a
+    * compressed image the image texel dimensions written to the compressed
+    * image will be the source extent multiplied by the compressed texel
+    * block dimensions.
     *
     * This means we only have to adjust the extent if the source image is
     * compressed.
@@ -3804,6 +3889,13 @@ resolve_sysmem(struct tu_cmd_buffer *cmd,
    }
 
    ops->teardown(cmd, cs);
+
+   /* Для A829: принудительный сброс CCU после resolve */
+   uint32_t gpu_id = cmd->device->physical_device->dev_id.gpu_id;
+   if (gpu_id == 829) {
+      tu_force_ccu_flush_depth<CHIP>(cmd, cs, gpu_id);
+      tu_force_ccu_invalidate_depth<CHIP>(cmd, cs, gpu_id);
+   }
 
    trace_end_sysmem_resolve(&cmd->rp_trace, cs);
 }
@@ -4977,6 +5069,13 @@ clear_sysmem_attachment(struct tu_cmd_buffer *cmd,
    }
 
    ops->teardown(cmd, cs);
+
+   /* Для A829: принудительный сброс CCU после очистки sysmem */
+   uint32_t gpu_id = cmd->device->physical_device->dev_id.gpu_id;
+   if (gpu_id == 829) {
+      tu_force_ccu_flush_depth<CHIP>(cmd, cs, gpu_id);
+      tu_force_ccu_invalidate_depth<CHIP>(cmd, cs, gpu_id);
+   }
 
    trace_end_sysmem_clear(&cmd->rp_trace, cs);
 }
@@ -6237,4 +6336,3 @@ tu_blit_subsampled_apron(struct tu_cmd_buffer *cmd,
    }
 }
 TU_GENX(tu_blit_subsampled_apron);
-
