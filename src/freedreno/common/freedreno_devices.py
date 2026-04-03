@@ -1386,7 +1386,6 @@ add_gpus([
         CHIP.A8XX,
         [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen1, 
          GPUProps(
-             #ЗНАЧЕНИЯ ТРЕБУЮТ ПРОВЕРКИ!
              # Sysmem буфферы
             sysmem_vpc_attr_buf_size = 131072, 
             sysmem_vpc_pos_buf_size = 65536,
@@ -1414,7 +1413,7 @@ add_gpus([
             has_coherent_ubwc_flag_caches = True,
             has_fs_tex_prefetch = False,
             has_salu_int_narrowing_quirk = True,
-            #shading_rate_matches_vk = True, Не поддерживает?? проверить!
+            shading_rate_matches_vk = True,
          )],
         num_ccu = 6,
         num_slices = 3,
@@ -1442,9 +1441,9 @@ add_gpus([
             sysmem_vpc_bv_pos_buf_size = 32768,
 # глубины цветов sysmem
             sysmem_ccu_color_cache_fraction = CCUColorCacheFraction.FULL.value,
-            sysmem_per_ccu_color_cache_size = 128 * 1024,
+            sysmem_per_ccu_color_cache_size = 64 * 1024,
             sysmem_ccu_depth_cache_fraction = CCUColorCacheFraction.THREE_QUARTER.value,
-            sysmem_per_ccu_depth_cache_size = 192 * 1024,
+            sysmem_per_ccu_depth_cache_size = 64 * 1024,
 #Gmem глубина и цвет 
             gmem_ccu_color_cache_fraction = CCUColorCacheFraction.EIGHTH.value,
             gmem_per_ccu_color_cache_size = 32 * 1024,
