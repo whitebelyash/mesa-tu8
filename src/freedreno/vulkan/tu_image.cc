@@ -307,6 +307,16 @@ tiling_possible(VkFormat format)
    return true;
 }
 
+static bool
+tu_allow_ubwc_format(const struct fd_dev_info *info,
+                     enum pipe_format pfmt,
+                     unsigned cpp)
+{
+   if (info->chip >= 8 && cpp == 1)
+      return false;
+   return true;
+}
+
 /* Checks if we should advertise UBWC support for the given usage.
  *
  * Used by both vkCreateImage and vkGetPhysicalDeviceFormatProperties2, so the
@@ -327,6 +337,15 @@ ubwc_possible(struct tu_device *device,
    /* TODO: enable for a702 */
    if (info->props.is_a702)
       return false;
+
+   enum pipe_format pfmt = vk_format_to_pipe_format(format);
+   unsigned cpp = util_format_get_blocksize(pfmt);
+
+   if (!tu_allow_ubwc_format(info, pfmt, cpp)) {
+      if (device)
+         perf_debug(device, "UBWC_DISABLED_8BPP");
+      return false;
+   }
 
    /* UBWC isn't possible with sparse residency, because unbound blocks may
     * have leftover fast-clear data and therefore may show up as non-zero.
@@ -521,6 +540,25 @@ tu_image_update_layout(struct tu_device *device, struct tu_image *image,
    if (has_r8g8 && tile_mode == TILE6_3 &&
        (image->vk.usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT)) {
       tile_mode = TILE6_LINEAR;
+   }
+
+   /* Reject UBWC on formats that are unconditionally unsupported (like 8bpp on A8xx).
+    * This catches gralloc imports that might force DRM_FORMAT_MOD_QCOM_COMPRESSED.
+    * For local/internal images, tu_image_init already evaluated ubwc_possible and cached the result
+    * in image->ubwc_enabled, so we bypass redundant recomputation.
+    */
+   if (modifier != DRM_FORMAT_MOD_INVALID) {
+      if (image->ubwc_enabled) {
+         enum pipe_format pfmt = vk_format_to_pipe_format(image->vk.format);
+         unsigned cpp = util_format_get_blocksize(pfmt);
+         if (!tu_allow_ubwc_format(device->physical_device->info, pfmt, cpp)) {
+            image->ubwc_enabled = false;
+            if (force_ubwc) {
+               perf_debug(device, "UBWC_DISABLED_8BPP (Import)");
+               force_ubwc = false;
+            }
+         }
+      }
    }
 
    /* We cannot support sparse residency with linear images, it should've been
@@ -801,7 +839,14 @@ tu_image_init(struct tu_device *device, struct tu_image *image,
             }
          } else {
             image->is_mutable = true;
-            if (!format_list_ubwc_possible(device, fmt_list, pCreateInfo))
+            /* When ubwc_all_formats_compatible is set, the HW correctly
+             * handles UBWC (including fast-clear) for any format cast
+             * permitted by Vulkan. So if there's no format list, we can
+             * safely keep UBWC — all compatible formats are UBWC-safe.
+             * Only check individual format UBWC support when a list is
+             * explicitly provided.
+             */
+            if (fmt_list && !format_list_ubwc_possible(device, fmt_list, pCreateInfo))
                image->ubwc_enabled = false;
          }
 
