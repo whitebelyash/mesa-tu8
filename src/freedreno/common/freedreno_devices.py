@@ -1586,7 +1586,7 @@ add_gpus([
              has_salu_int_narrowing_quirk = True,
              shading_rate_matches_vk = True, # Походу это поддерживает вся 8 Серия
              disable_gmem = False, # Экспериментально
-             gmem_size = 2 * 1024 * 1024
+             gmem_size = 2 * 1024 * 1024,
             enable_tp_ubwc_flag_hint = True,
         )],
         num_ccu = 4,
