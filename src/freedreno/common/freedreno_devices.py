@@ -1572,7 +1572,7 @@ add_gpus([
          )],
         num_ccu = 4,
         num_slices = 2,
-        tile_align_w = 64,
+        tile_align_w = 96,
         tile_align_h = 32,
         tile_max_w = 16384,
         tile_max_h = 16384,
