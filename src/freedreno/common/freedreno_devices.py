@@ -1554,9 +1554,9 @@ add_gpus([
              gmem_vpc_bv_pos_buf_size = 16384,  
     
     # Gmem глубина и цвет 
-              gmem_ccu_color_cache_fraction = CCUColorCacheFraction.HALL.value,
+              gmem_ccu_color_cache_fraction = CCUColorCacheFraction.HALF.value,
               gmem_per_ccu_color_cache_size = 128 * 1024, 
-              gmem_ccu_depth_cache_fraction = CCUColorCacheFraction.FULL.value,
+              gmem_ccu_depth_cache_fraction = CCUColorCacheFraction.HALF.value,
               gmem_per_ccu_depth_cache_size = 192 * 1024,
 
     # Оптимизации и фичи
