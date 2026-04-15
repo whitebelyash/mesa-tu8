@@ -81,9 +81,6 @@ struct fd_dev_info {
 
    uint32_t num_slices;    /* gen8+ */
 
-   /* GMEM size in bytes */
-   uint32_t gmem_size;
-
    struct {
       uint32_t RB_DBG_ECO_CNTL;
       uint32_t RB_DBG_ECO_CNTL_blit;
@@ -477,6 +474,9 @@ struct fd_dev_info {
       uint32_t max_draw_states;
       /* If GMEM needs to be disabled for this GPU */
       bool disable_gmem;
+
+      /* GMEM size in bytes */
+      uint32_t gmem_size;
    } props;
 };
 
