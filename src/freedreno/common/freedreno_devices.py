@@ -1557,7 +1557,7 @@ add_gpus([
               gmem_ccu_color_cache_fraction = CCUColorCacheFraction.HALF.value,
               gmem_per_ccu_color_cache_size = 128 * 1024, 
               gmem_ccu_depth_cache_fraction = CCUColorCacheFraction.HALF.value,
-              gmem_per_ccu_depth_cache_size = 192 * 1024,
+              gmem_per_ccu_depth_cache_size = 128 * 1024,
 
     # Оптимизации и фичи
              has_ray_intersection = False, # По просьбе группы
@@ -1572,7 +1572,7 @@ add_gpus([
          )],
         num_ccu = 4,
         num_slices = 2,
-        tile_align_w = 96,
+        tile_align_w = 64,
         tile_align_h = 32,
         tile_max_w = 16384,
         tile_max_h = 16384,
