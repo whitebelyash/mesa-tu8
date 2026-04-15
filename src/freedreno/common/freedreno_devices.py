@@ -1557,7 +1557,7 @@ add_gpus([
               gmem_ccu_color_cache_fraction = CCUColorCacheFraction.EIGHTH.value,
               gmem_per_ccu_color_cache_size = 96 * 1024, 
               gmem_ccu_depth_cache_fraction = CCUColorCacheFraction.FULL.value,
-              gmem_per_ccu_depth_cache_size = 192 * 1024,
+              gmem_per_ccu_depth_cache_size = 128 * 1024,
 
     # Оптимизации и фичи
              has_ray_intersection = False, # По просьбе группы
