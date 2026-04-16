@@ -1405,18 +1405,17 @@ tu_autotune::find_rp_history(const rp_key &key)
 }
 
 tu_autotune::rp_history_handle
-tu_autotune::rp_history_handle
 tu_autotune::find_or_create_rp_history(const rp_key &key)
 {
-   rp_history *existing = find_rp_history(key);
+   rp_history_handle existing = find_rp_history(key);
    if (existing)
-      return *existing;
+      return existing;
 
    /* If we reach here, we have to create a new history. */
    std::unique_lock lock(rp_mutex);
    auto it = rp_histories.find(key);
    if (it != rp_histories.end())
-      return it->second; /* Another thread created the history while we were waiting for the lock. */
+      return rp_history_handle(it->second); /* Another thread created the history while we were waiting for the lock. */
    
    uint32_t chip_id = device->physical_device->dev_id.chip_id;
    auto result = rp_histories.emplace(
