@@ -361,12 +361,15 @@ tu_autotune::get_env_config()
          algo = algorithm::PREFER_GMEM;
       }
 
-      if (!has_flags_override) {
+      if (!flags_env_str) {
          if (profile.force_big_gmem)
             mod_flags |= (uint32_t) mod_flag::BIG_GMEM;
          if (profile.prefer_tune_small)
             mod_flags |= (uint32_t) mod_flag::TUNE_SMALL;
       }
+
+      if ((mod_flags & ~supported_mod_flags) != 0)
+         mod_flags &= supported_mod_flags
 
       if ((mod_flags & ~supported_mod_flags) != 0)
          mod_flags &= supported_mod_flags;
@@ -1118,13 +1121,13 @@ struct tu_autotune::rp_history {
       bool should_reset = false; /* If true, will reset sysmem_probability before next update. */
       bool locked = false;       /* If true, the probability will no longer be updated. */
       uint64_t seed[2] { 0x3bffb83978e24f88, 0x9238d5d56c71cd35 };
-      uint32_t chip_id;
+      
 
       bool is_sysmem_winning = false;
       uint64_t winning_since_ts = 0;
 
     public:
-      profiled_algo(uint64_t hash, uint32_t chip_id) : chip_id(chip_id)
+      explicit profiled_algo(uint64_t hash)
       {
          seed[1] = hash;
       }
@@ -1358,9 +1361,9 @@ struct tu_autotune::rp_history {
       }
    } preempt_optimize;
 
-   rp_history(uint64_t hash, uint32_t chip_id) : hash(hash), last_use_ts(os_time_get_nano()), bandwidth(chip_id), profiled(hash, chip_id)
-   {
-   }
+   rp_history(uint64_t hash, uint32_t chip_id) : hash(hash), last_use_ts(os_time_get_nano()), bandwidth(chip_id), profiled(hash)
+{
+}
 
    void process(rp_entry &entry, tu_autotune &at)
    {
