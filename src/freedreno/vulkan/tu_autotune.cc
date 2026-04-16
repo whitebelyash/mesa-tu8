@@ -97,6 +97,8 @@ struct a8xx_profile {
    float gmem_threshold_scale;
    uint32_t max_history;
    bool prefer_gmem;
+   bool force_big_gmem;
+   bool prefer_tune_small;
 };
 
 static inline struct a8xx_profile
@@ -104,18 +106,18 @@ get_a8xx_profile(uint32_t chip_id)
 {
    switch (chip_id) {
    case 0x44010000: /* Adreno 810 */
-      return (struct a8xx_profile){0.85f, 4, true};
+      return (struct a8xx_profile){0.82f, 5, true, true, true};
    case 0x44030000: /* Adreno 825 */
-      return (struct a8xx_profile){0.75f, 4, true};
+      return (struct a8xx_profile){0.72f, 5, true, true, true};
    case 0x44030A20: /* Adreno 829 */
-      return (struct a8xx_profile){0.75f, 4, true};
+      return (struct a8xx_profile){0.70f, 5, true, true, true};
    case 0x44050001:
    case 0xffff44050000: /* Adreno 830 */
-      return (struct a8xx_profile){0.7f, 4, true};
+      return (struct a8xx_profile){0.68f, 4, true, false, true};
    case 0xffff44050A31: /* Adreno 840 */
-      return (struct a8xx_profile){0.6f, 4, true};
+      return (struct a8xx_profile){0.62f, 4, true, false, true};
    default:
-      return (struct a8xx_profile){1.0f, 3, false};
+      return (struct a8xx_profile){1.0f, 3, false, false, false};
    }
 }
 
@@ -333,6 +335,7 @@ tu_autotune::get_env_config()
       const char *flags_env_str = os_get_option("TU_AUTOTUNE_FLAGS");
       uint32_t mod_flags = 0;
       if (flags_env_str) {
+         bool has_flags_override = false;
          static const struct debug_control tu_at_flags_control[] = {
             { "big_gmem", (uint32_t) mod_flag::BIG_GMEM },
             { "tune_small", (uint32_t) mod_flag::TUNE_SMALL },
@@ -341,6 +344,7 @@ tu_autotune::get_env_config()
          };
 
          mod_flags = parse_debug_string(flags_env_str, tu_at_flags_control);
+         has_flags_override = true;
          if (TU_DEBUG(STARTUP))
             mesa_logi("TU_AUTOTUNE_FLAGS=0x%x (%s)", mod_flags, flags_env_str);
 
@@ -350,6 +354,23 @@ tu_autotune::get_env_config()
          }
       }
 
+      const struct a8xx_profile profile = get_a8xx_profile(device->physical_device->dev_id.chip_id);
+      if (!algo_strv.empty()) {
+         /* Explicit user or instance config takes precedence. */
+      } else if (profile.prefer_gmem) {
+         algo = algorithm::PREFER_GMEM;
+      }
+
+      if (!has_flags_override) {
+         if (profile.force_big_gmem)
+            mod_flags |= (uint32_t) mod_flag::BIG_GMEM;
+         if (profile.prefer_tune_small)
+            mod_flags |= (uint32_t) mod_flag::TUNE_SMALL;
+      }
+
+      if ((mod_flags & ~supported_mod_flags) != 0)
+         mod_flags &= supported_mod_flags;
+      
       assert((uint8_t) mod_flags == mod_flags);
       at_config = config_t(algo, (uint8_t) mod_flags);
    });
