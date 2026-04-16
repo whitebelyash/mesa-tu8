@@ -104,11 +104,11 @@ get_a8xx_profile(uint32_t chip_id)
 {
    switch (chip_id) {
    case 0x44010000: /* Adreno 810 */
-      return (struct a8xx_profile){1.2f, 2, false};
+      return (struct a8xx_profile){0.85f, 4, true};
    case 0x44030000: /* Adreno 825 */
-      return (struct a8xx_profile){1.0f, 3, true};
+      return (struct a8xx_profile){0.75f, 4, true};
    case 0x44030A20: /* Adreno 829 */
-      return (struct a8xx_profile){0.8f, 2, false};
+      return (struct a8xx_profile){0.75f, 4, true};
    case 0x44050001:
    case 0xffff44050000: /* Adreno 830 */
       return (struct a8xx_profile){0.7f, 4, true};
@@ -1070,10 +1070,6 @@ struct tu_autotune::rp_history {
          bool select_sysmem = sysmem_bandwidth <= gmem_bandwidth;
          render_mode mode = select_sysmem ? render_mode::SYSMEM : render_mode::GMEM;
 
-         if (!profile.prefer_gmem && mode == render_mode::GMEM) {
-            mode = render_mode::SYSMEM;
-         }
-
          UNUSED const VkExtent2D &extent = cmd_state->render_areas[0].extent;
          at_log_bandwidth_h(
             "%" PRIu32 " selecting %s\n"
@@ -1214,11 +1210,6 @@ struct tu_autotune::rp_history {
          uint32_t l_sysmem_probability = sysmem_probability.load(std::memory_order_relaxed);
          bool select_sysmem = (rand_xorshift128plus(seed) % PROBABILITY_MAX) < l_sysmem_probability;
          render_mode mode = select_sysmem ? render_mode::SYSMEM : render_mode::GMEM;
-
-         struct a8xx_profile profile = get_a8xx_profile(chip_id);
-         if (!profile.prefer_gmem && mode == render_mode::GMEM) {
-            mode = render_mode::SYSMEM;
-         }
 
          at_log_profiled_h("%" PRIu32 "%% sysmem chance, using %s", history.hash, l_sysmem_probability,
                            render_mode_str(mode));
