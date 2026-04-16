@@ -368,9 +368,7 @@ tu_autotune::get_env_config()
             mod_flags |= (uint32_t) mod_flag::TUNE_SMALL;
       }
 
-      if ((mod_flags & ~supported_mod_flags) != 0)
-         mod_flags &= supported_mod_flags
-
+       
       if ((mod_flags & ~supported_mod_flags) != 0)
          mod_flags &= supported_mod_flags;
       
