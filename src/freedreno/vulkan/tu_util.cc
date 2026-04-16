@@ -506,7 +506,13 @@ tu_tiling_config_update_pipes(struct tu_vsc_config *vsc,
 static void
 tu_tiling_config_update_binning(struct tu_vsc_config *vsc, const struct tu_device *device)
 {
-   vsc->binning_useful = (vsc->tile_count.width * vsc->tile_count.height) > 2;
+   const uint32_t tile_count = vsc->tile_count.width * vsc->tile_count.height;
+   const bool is_a8xx = device->physical_device->info->chip >= A8XX;
+
+   /* A8xx generally benefits more from keeping GMEM/binning enabled, even for
+    * small renderpasses, due to stronger on-chip bandwidth behavior.
+    */
+   vsc->binning_useful = tile_count > (is_a8xx ? 1 : 2);
 
    if (TU_DEBUG(FORCEBIN))
       vsc->binning_useful = true;
