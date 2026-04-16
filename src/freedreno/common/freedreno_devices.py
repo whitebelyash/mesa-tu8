@@ -1441,7 +1441,7 @@ add_gpus([
             gmem_vpc_pos_buf_size = 12288,
             gmem_vpc_bv_pos_buf_size = 20480,
 
-            reg_size_vec4 = 96, # Для 810 лучше подходить 96, хоть оно и относится ко 2 поколению
+            reg_size_vec4 = 64, # Для 810 лучше подходить 96, хоть оно и относится ко 2 поколению
             disable_gmem = False,
             gmem_size = 576 * 1024, # Слишком мало...
             has_ray_intersection = False,
@@ -1560,8 +1560,8 @@ add_gpus([
               gmem_per_ccu_depth_cache_size = 128 * 1024,
 
     # Оптимизации и фичи
-             has_ray_intersection = False, # По просьбе группы
-             has_sw_fuse = False,
+             has_ray_intersection = True, # По просьбе группы
+             has_sw_fuse = True,
              has_coherent_ubwc_flag_caches = True,
              has_fs_tex_prefetch = False,
              has_salu_int_narrowing_quirk = True,
