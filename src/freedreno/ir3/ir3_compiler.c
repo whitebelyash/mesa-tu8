@@ -206,6 +206,33 @@ static const nir_shader_compiler_options ir3_base_options = {
    .lower_convert_alu_types = ir3_nir_lower_convert_alu_types,
 };
 
+struct ir3_a8xx_codegen_profile {
+   uint8_t max_unroll_iterations;
+   uint8_t alu_to_alu_delay;
+   uint8_t non_alu_delay;
+   uint8_t cat3_src2_read_delay;
+};
+
+static struct ir3_a8xx_codegen_profile
+ir3_a8xx_codegen_profile(uint64_t chip_id)
+{
+   switch (chip_id) {
+   case 0x44010000:
+   case 0xffff44010000: /* Adreno 810 */
+      return (struct ir3_a8xx_codegen_profile){16, 2, 5, 1};
+   case 0x44030000: /* Adreno 825 */
+      return (struct ir3_a8xx_codegen_profile){24, 2, 5, 1};
+   case 0x44030A20: /* Adreno 829 */
+      return (struct ir3_a8xx_codegen_profile){26, 2, 5, 1};
+   case 0xffff44050000: /* Adreno 830 */
+   case 0x44050001: /* Adreno 830 (KGSL) */
+      return (struct ir3_a8xx_codegen_profile){32, 2, 5, 1};
+   case 0xffff44050A31: /* Adreno 840 */
+      return (struct ir3_a8xx_codegen_profile){32, 2, 5, 1};
+   default:
+      return (struct ir3_a8xx_codegen_profile){28, 2, 5, 1};
+   }
+}
 
 static void
 __debug_init(void)
@@ -401,6 +428,7 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
    compiler->nir_options = ir3_base_options;
    compiler->nir_options.has_iadd3 = dev_info->props.has_sad;
 
+   
    if (compiler->gen >= 6) {
       compiler->nir_options.force_indirect_unrolling = nir_var_all,
       compiler->nir_options.lower_device_index_to_zero = true;
@@ -416,6 +444,19 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
       if (dev_info->props.has_dp4acc && dev_info->props.has_compliant_dp4acc) {
          compiler->nir_options.has_sdot_4x8 =
             compiler->nir_options.has_sdot_4x8_sat = true;
+      }
+      if (compiler->gen >= 8) {
+         const struct ir3_a8xx_codegen_profile profile =
+            ir3_a8xx_codegen_profile(dev_id->chip_id);
+
+         /* A8xx is a subset of gen>=6: keep all generic gen6+ NIR features
+          * above, then apply A8xx-only codegen/scheduler tuning as a final
+          * override.
+          */
+         compiler->nir_options.max_unroll_iterations = profile.max_unroll_iterations;
+         compiler->delay_slots.alu_to_alu = profile.alu_to_alu_delay;
+         compiler->delay_slots.non_alu = profile.non_alu_delay;
+         compiler->delay_slots.cat3_src2_read = profile.cat3_src2_read_delay;
       }
    } else if (compiler->gen >= 3 && compiler->gen <= 5) {
       compiler->nir_options.vertex_id_zero_based = true;
