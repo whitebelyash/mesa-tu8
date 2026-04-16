@@ -1420,7 +1420,7 @@ add_gpus([
        GPUId(chip_id=0xffff44010000, name="Adreno (TM) 810"),
     ], A6xxGPUInfo(
         CHIP.A8XX,
-        [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen2, GPUProps(
+        [a7xx_base, a7xx_gen3, a8xx_base, a8xx_gen1, GPUProps(
             # Sysmem буфферы
             sysmem_vpc_attr_buf_size = 131072, 
             sysmem_vpc_pos_buf_size = 65536,
@@ -1441,7 +1441,7 @@ add_gpus([
             gmem_vpc_pos_buf_size = 12288,
             gmem_vpc_bv_pos_buf_size = 20480,
 
-            reg_size_vec4 = 64, # Для 810 лучше подходить 96, хоть оно и относится ко 2 поколению
+            reg_size_vec4 = 128, # Для 810 лучше подходить 96, хоть оно и относится ко 2 поколению
             disable_gmem = False,
             gmem_size = 576 * 1024, # Слишком мало...
             has_ray_intersection = False,
