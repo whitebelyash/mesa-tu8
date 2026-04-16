@@ -1441,7 +1441,7 @@ add_gpus([
             gmem_vpc_pos_buf_size = 12288,
             gmem_vpc_bv_pos_buf_size = 20480,
 
-            reg_size_vec4 = 128, # Для 810 лучше подходить 96, хоть оно и относится ко 2 поколению
+            reg_size_vec4 = 96, # Для 810 лучше подходить 96, хоть оно и относится ко 2 поколению
             disable_gmem = False,
             gmem_size = 576 * 1024, # Слишком мало...
             has_ray_intersection = False,
