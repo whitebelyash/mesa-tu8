@@ -1001,10 +1001,6 @@ struct tu_autotune::rp_history {
    std::atomic<uint32_t> refcount = 0; /* Reference count to prevent deletion when active. */
    std::atomic<uint64_t> last_use_ts;  /* Last time the reference count was updated, in monotonic nanoseconds. */
 
-   rp_history(uint64_t hash): hash(hash), last_use_ts(os_time_get_nano()), profiled(hash)
-   {
-   }
-
    /** Bandwidth Estimation Algorithm **/
    struct bandwidth_algo {
     private:
@@ -1422,8 +1418,9 @@ tu_autotune::find_or_create_rp_history(const rp_key &key)
       return it->second; /* Another thread created the history while we were waiting for the lock. */
    
    uint32_t chip_id = device->physical_device->dev_id.chip_id;
-   auto history = rp_histories.emplace(std::make_pair(key, rp_history(key.hash, chip_id)));
-   return rp_history_handle(history.first->second);
+   rp_history new_history(key.hash, chip_id);
+   auto result = rp_histories.emplace(key, std::move(new_history));
+   return rp_history_handle(result.first->second);
 }
 
 void
