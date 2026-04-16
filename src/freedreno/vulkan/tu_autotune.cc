@@ -91,6 +91,34 @@ render_mode_str(tu_autotune::render_mode mode)
    }
 }
 
+/** A8xx-specific optimizations **/
+
+struct a8xx_profile {
+   float gmem_threshold_scale;
+   uint32_t max_history;
+   bool prefer_gmem;
+};
+
+static inline struct a8xx_profile
+get_a8xx_profile(uint32_t chip_id)
+{
+   switch (chip_id) {
+   case 0x44010000: /* Adreno 810 */
+      return (struct a8xx_profile){1.2f, 2, false};
+   case 0x44030000: /* Adreno 825 */
+      return (struct a8xx_profile){1.0f, 3, true};
+   case 0x44030A20: /* Adreno 829 */
+      return (struct a8xx_profile){0.8f, 2, false};
+   case 0x44050001:
+   case 0xffff44050000: /* Adreno 830 */
+      return (struct a8xx_profile){0.7f, 4, true};
+   case 0xffff44050A31: /* Adreno 840 */
+      return (struct a8xx_profile){0.6f, 4, true};
+   default:
+      return (struct a8xx_profile){1.0f, 3, false};
+   }
+}
+
 /** Configuration **/
 
 enum class tu_autotune::algorithm : uint8_t {
@@ -981,11 +1009,21 @@ struct tu_autotune::rp_history {
    struct bandwidth_algo {
     private:
       exponential_average<uint32_t> mean_samples_passed;
+      std::deque<uint64_t> history_samples;
+      uint32_t chip_id;
 
     public:
+      bandwidth_algo(uint32_t chip_id) : chip_id(chip_id) {}
+
       void update(uint32_t samples)
       {
          mean_samples_passed.add(samples);
+         
+         struct a8xx_profile profile = get_a8xx_profile(chip_id);
+         history_samples.push_back(samples);
+         if (history_samples.size() > profile.max_history) {
+            history_samples.pop_front();
+         }
       }
 
       render_mode get_optimal_mode(rp_history &history,
@@ -1030,19 +1068,27 @@ struct tu_autotune::rp_history {
           */
          gmem_bandwidth = (gmem_bandwidth * 11 + total_draw_call_bandwidth) / 10;
 
+         struct a8xx_profile profile = get_a8xx_profile(chip_id);
+         gmem_bandwidth = (uint64_t)(gmem_bandwidth * profile.gmem_threshold_scale);
+
          bool select_sysmem = sysmem_bandwidth <= gmem_bandwidth;
          render_mode mode = select_sysmem ? render_mode::SYSMEM : render_mode::GMEM;
+
+         if (!profile.prefer_gmem && mode == render_mode::GMEM) {
+            mode = render_mode::SYSMEM;
+         }
 
          UNUSED const VkExtent2D &extent = cmd_state->render_areas[0].extent;
          at_log_bandwidth_h(
             "%" PRIu32 " selecting %s\n"
             "   mean_samples=%" PRIu64 ", draw_bandwidth_per_sample=%.2f, total_draw_call_bandwidth=%" PRIu64
             ", render_areas[0]=%" PRIu32 "x%" PRIu32 ", sysmem_bandwidth_per_pixel=%" PRIu32
-            ", gmem_bandwidth_per_pixel=%" PRIu32 ", sysmem_bandwidth=%" PRIu64 ", gmem_bandwidth=%" PRIu64,
+            ", gmem_bandwidth_per_pixel=%" PRIu32 ", sysmem_bandwidth=%" PRIu64 ", gmem_bandwidth=%" PRIu64
+            ", gmem_scale=%.2f",
             history.hash, rp_state->drawcall_count, render_mode_str(mode), mean_samples,
             (float) rp_state->drawcall_bandwidth_per_sample_sum / rp_state->drawcall_count, total_draw_call_bandwidth,
             extent.width, extent.height, pass->sysmem_bandwidth_per_pixel, pass->gmem_bandwidth_per_pixel,
-            sysmem_bandwidth, gmem_bandwidth);
+            sysmem_bandwidth, gmem_bandwidth, profile.gmem_threshold_scale);
 
          return mode;
       }
@@ -1059,12 +1105,13 @@ struct tu_autotune::rp_history {
       bool should_reset = false; /* If true, will reset sysmem_probability before next update. */
       bool locked = false;       /* If true, the probability will no longer be updated. */
       uint64_t seed[2] { 0x3bffb83978e24f88, 0x9238d5d56c71cd35 };
+      uint32_t chip_id;
 
       bool is_sysmem_winning = false;
       uint64_t winning_since_ts = 0;
 
     public:
-      profiled_algo(uint64_t hash)
+      profiled_algo(uint64_t hash, uint32_t chip_id) : chip_id(chip_id)
       {
          seed[1] = hash;
       }
@@ -1171,6 +1218,11 @@ struct tu_autotune::rp_history {
          uint32_t l_sysmem_probability = sysmem_probability.load(std::memory_order_relaxed);
          bool select_sysmem = (rand_xorshift128plus(seed) % PROBABILITY_MAX) < l_sysmem_probability;
          render_mode mode = select_sysmem ? render_mode::SYSMEM : render_mode::GMEM;
+
+         struct a8xx_profile profile = get_a8xx_profile(chip_id);
+         if (!profile.prefer_gmem && mode == render_mode::GMEM) {
+            mode = render_mode::SYSMEM;
+         }
 
          at_log_profiled_h("%" PRIu32 "%% sysmem chance, using %s", history.hash, l_sysmem_probability,
                            render_mode_str(mode));
@@ -1298,6 +1350,10 @@ struct tu_autotune::rp_history {
       }
    } preempt_optimize;
 
+   rp_history(uint64_t hash, uint32_t chip_id) : hash(hash), last_use_ts(os_time_get_nano()), bandwidth(chip_id), profiled(hash, chip_id)
+   {
+   }
+
    void process(rp_entry &entry, tu_autotune &at)
    {
       /* We use entry config to know what metrics it has, autotune config to know what algorithms are enabled. */
@@ -1364,7 +1420,9 @@ tu_autotune::find_or_create_rp_history(const rp_key &key)
    auto it = rp_histories.find(key);
    if (it != rp_histories.end())
       return it->second; /* Another thread created the history while we were waiting for the lock. */
-   auto history = rp_histories.emplace(std::make_pair(key, key.hash));
+   
+   uint32_t chip_id = device->physical_device->dev_id.chip_id;
+   auto history = rp_histories.emplace(std::make_pair(key, rp_history(key.hash, chip_id)));
    return rp_history_handle(history.first->second);
 }
 
