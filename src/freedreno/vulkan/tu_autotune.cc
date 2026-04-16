@@ -1405,6 +1405,7 @@ tu_autotune::find_rp_history(const rp_key &key)
 }
 
 tu_autotune::rp_history_handle
+tu_autotune::rp_history_handle
 tu_autotune::find_or_create_rp_history(const rp_key &key)
 {
    rp_history *existing = find_rp_history(key);
@@ -1418,8 +1419,10 @@ tu_autotune::find_or_create_rp_history(const rp_key &key)
       return it->second; /* Another thread created the history while we were waiting for the lock. */
    
    uint32_t chip_id = device->physical_device->dev_id.chip_id;
-   rp_history new_history(key.hash, chip_id);
-   auto result = rp_histories.emplace(key, std::move(new_history));
+   auto result = rp_histories.emplace(
+      std::piecewise_construct,
+      std::forward_as_tuple(key),
+      std::forward_as_tuple(key.hash, chip_id));
    return rp_history_handle(result.first->second);
 }
 
