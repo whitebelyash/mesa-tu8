@@ -239,6 +239,14 @@ struct ir3_compiler {
 
    bool cat3_rel_offset_0_quirk;
 
+   /* A8xx chip-specific tuning */
+   bool is_a8xx;
+   uint8_t a8xx_tier; /* 0=A810, 1=A825, 2=A829, 3=A830, 4=A840 */
+   bool a8xx_aggressive_fp16;
+   bool a8xx_minimize_barriers;
+   bool a8xx_vectorize_io;
+   uint8_t a8xx_reg_pressure_scale; /* 100 = default, <100 = more aggressive */
+
    struct {
       /* The number of cycles needed for the result of one ALU operation to be
        * available to another ALU operation. Only valid when the halfness of the

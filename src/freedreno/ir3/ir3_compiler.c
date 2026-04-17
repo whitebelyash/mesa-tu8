@@ -206,6 +206,37 @@ static const nir_shader_compiler_options ir3_base_options = {
    .lower_convert_alu_types = ir3_nir_lower_convert_alu_types,
 };
 
+struct ir3_a8xx_codegen_profile {
+   uint8_t max_unroll_iterations;
+   uint8_t alu_to_alu_delay;
+   uint8_t non_alu_delay;
+   uint8_t cat3_src2_read_delay;
+   bool aggressive_fp16;
+   bool minimize_barriers;
+   bool vectorize_io;
+   uint8_t reg_pressure_scale;
+};
+
+static struct ir3_a8xx_codegen_profile
+ir3_a8xx_codegen_profile(uint64_t chip_id)
+{
+   switch (chip_id) {
+   case 0x44010000:
+   case 0xffff44010000: /* Adreno 810 */
+      return (struct ir3_a8xx_codegen_profile){16, 2, 5, 1, true, true, true, 70};
+   case 0x44030000: /* Adreno 825 */
+      return (struct ir3_a8xx_codegen_profile){24, 2, 5, 1, true, true, true, 85};
+   case 0x44030A20: /* Adreno 829 */
+      return (struct ir3_a8xx_codegen_profile){26, 2, 5, 1, true, true, true, 85};
+   case 0x44050001:
+   case 0xffff44050000: /* Adreno 830 */
+      return (struct ir3_a8xx_codegen_profile){32, 2, 5, 1, true, false, true, 100};
+   case 0xffff44050A31: /* Adreno 840 */
+      return (struct ir3_a8xx_codegen_profile){32, 2, 5, 1, true, false, true, 100};
+   default:
+      return (struct ir3_a8xx_codegen_profile){28, 2, 5, 1, false, false, false, 100};
+   }
+}
 
 static void
 __debug_init(void)
@@ -341,6 +372,49 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
       compiler->max_const_safe = 256;
    }
 
+   /* Initialize A8xx-specific defaults */
+   compiler->is_a8xx = false;
+   compiler->a8xx_tier = 0;
+   compiler->a8xx_aggressive_fp16 = false;
+   compiler->a8xx_minimize_barriers = false;
+   compiler->a8xx_vectorize_io = false;
+   compiler->a8xx_reg_pressure_scale = 100;
+
+   if (compiler->gen >= 8) {
+      const struct ir3_a8xx_codegen_profile profile =
+         ir3_a8xx_codegen_profile(dev_id->chip_id);
+
+      compiler->nir_options.max_unroll_iterations = profile.max_unroll_iterations;
+      compiler->delay_slots.alu_to_alu = profile.alu_to_alu_delay;
+      compiler->delay_slots.non_alu = profile.non_alu_delay;
+      compiler->delay_slots.cat3_src2_read = profile.cat3_src2_read_delay;
+
+      /* A8xx tuning flags */
+      compiler->is_a8xx = true;
+      compiler->a8xx_aggressive_fp16 = profile.aggressive_fp16;
+      compiler->a8xx_minimize_barriers = profile.minimize_barriers;
+      compiler->a8xx_vectorize_io = profile.vectorize_io;
+      compiler->a8xx_reg_pressure_scale = profile.reg_pressure_scale;
+
+      /* Set tier based on chip */
+      switch (dev_id->chip_id) {
+      case 0x44010000:
+      case 0xffff44010000:
+         compiler->a8xx_tier = 0; break;
+      case 0x44030000:
+         compiler->a8xx_tier = 1; break;
+      case 0x44030A20:
+         compiler->a8xx_tier = 2; break;
+      case 0x44050001:
+      case 0xffff44050000:
+         compiler->a8xx_tier = 3; break;
+      case 0xffff44050A31:
+         compiler->a8xx_tier = 4; break;
+      default:
+         compiler->a8xx_tier = 0; break;
+      }
+   }
+
    if (dev_info->compute_lb_size) {
       compiler->compute_lb_size = dev_info->compute_lb_size;
    } else {
@@ -442,8 +516,14 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
    /* 16-bit ALU op generation is mostly controlled by frontend compiler options, but
     * this core NIR option enables some optimizations of 16-bit operations.
     */
-   if (compiler->gen >= 5 && !(ir3_shader_debug & IR3_DBG_NOFP16))
+   if (compiler->gen >= 5 && !(ir3_shader_debug & IR3_DBG_NOFP16)) {
       compiler->nir_options.support_16bit_alu = true;
+      /* Force aggressive FP16 for A8xx */
+      if (compiler->is_a8xx && compiler->a8xx_aggressive_fp16) {
+         compiler->nir_options.lower_flrp16 = true;
+         compiler->nir_options.lower_fdiv = true;
+      }
+   }
 
    compiler->nir_options.support_indirect_inputs =
       BITFIELD_BIT(MESA_SHADER_TESS_CTRL) |
