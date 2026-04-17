@@ -99,6 +99,9 @@ struct a8xx_profile {
    bool prefer_gmem;
    bool force_big_gmem;
    bool prefer_tune_small;
+   // === НОВОЕ: флаги для динамических корректировок из OLD ===
+   bool aggressive_gmem_avoidance;   // для A810
+   bool balanced_large_gmem;         // для A825/829
 };
 
 static inline struct a8xx_profile
@@ -106,20 +109,74 @@ get_a8xx_profile(uint32_t chip_id)
 {
    switch (chip_id) {
    case 0x44010000: /* Adreno 810 */
-      return (struct a8xx_profile){0.82f, 5, true, true, true};
+      return {0.82f, 5, true, true, true, true, false};
    case 0x44030000: /* Adreno 825 */
-      return (struct a8xx_profile){0.72f, 5, true, true, true};
+      return {0.72f, 5, true, true, true, false, true};
    case 0x44030A20: /* Adreno 829 */
-      return (struct a8xx_profile){0.70f, 5, true, true, true};
+      return {0.70f, 5, true, true, true, false, true};
    case 0x44050001:
    case 0xffff44050000: /* Adreno 830 */
-      return (struct a8xx_profile){0.68f, 4, true, false, true};
+      return {0.68f, 4, true, false, true, false, false};
    case 0xffff44050A31: /* Adreno 840 */
-      return (struct a8xx_profile){0.62f, 4, true, false, true};
+      return {0.62f, 4, true, false, true, false, false};
    default:
-      return (struct a8xx_profile){1.0f, 3, false, false, false};
+      return {1.0f, 3, false, false, false, false, false};
    }
 }
+
+// --- НАЧАЛО ВСТАВКИ ИЗ OLD ---
+// Перенос динамической логики из tu_autotune_apply_a8xx_bandwidth_bias (OLD)
+static void
+apply_dynamic_a8xx_bias(const struct a8xx_profile &profile,
+                        uint32_t drawcall_count,
+                        bool has_multiview_or_layers,
+                        uint64_t total_draw_call_bandwidth,
+                        uint64_t *sysmem_bandwidth,
+                        uint64_t *gmem_bandwidth)
+{
+   if (profile.aggressive_gmem_avoidance) {
+      // Adreno 810
+      if (drawcall_count <= 1) {
+         *sysmem_bandwidth = (*sysmem_bandwidth * 11) / 10;
+      } else if (drawcall_count >= 4) {
+         *gmem_bandwidth = (*gmem_bandwidth * 12) / 10;
+      }
+
+      if (has_multiview_or_layers) {
+         *gmem_bandwidth = (*gmem_bandwidth * 11) / 10;
+      }
+      if (total_draw_call_bandwidth > *gmem_bandwidth / 2) {
+         *gmem_bandwidth = (*gmem_bandwidth * 11) / 10;
+      }
+   } else if (profile.balanced_large_gmem) {
+      // Adreno 825/829
+      if (drawcall_count <= 1) {
+         *sysmem_bandwidth = (*sysmem_bandwidth * 21) / 20;
+      } else if (drawcall_count >= 3) {
+         *gmem_bandwidth = (*gmem_bandwidth * 11) / 10;
+      }
+
+      if (has_multiview_or_layers) {
+         *gmem_bandwidth = (*gmem_bandwidth * 21) / 20;
+      }
+
+      if (total_draw_call_bandwidth > *gmem_bandwidth / 2) {
+         *gmem_bandwidth = (*gmem_bandwidth * 21) / 20;
+      }
+   }
+}
+
+// Пороги для fallback (когда история отсутствует) из OLD
+static unsigned
+get_a8xx_sysmem_drawcall_threshold(uint32_t chip_id)
+{
+   if (chip_id == 0x44010000) // A810
+      return 3;
+   if (chip_id == 0x44030000 || chip_id == 0x44030A20) // A825/A829
+      return 3;
+   return 5; // default
+}
+// --- КОНЕЦ ВСТАВКИ ИЗ OLD ---
 
 /** Configuration **/
 
@@ -1033,6 +1090,9 @@ struct tu_autotune::rp_history {
     public:
       bandwidth_algo(uint32_t chip_id) : chip_id(chip_id) {}
 
+      // === НОВОЕ: публичный метод для проверки пустоты ===
+      bool empty() const { return mean_samples_passed.empty(); }
+
       void update(uint32_t samples)
       {
          mean_samples_passed.add(samples);
@@ -1088,6 +1148,17 @@ struct tu_autotune::rp_history {
 
          struct a8xx_profile profile = get_a8xx_profile(chip_id);
          gmem_bandwidth = (uint64_t)(gmem_bandwidth * profile.gmem_threshold_scale);
+
+         // --- НАЧАЛО ВСТАВКИ ИЗ OLD ---
+         // Применяем динамические корректировки, которых нет в статическом a8xx_profile
+         bool has_multiview_or_layers = (cmd_state->pass->num_views > 1) || (cmd_state->framebuffer->layers > 1);
+         apply_dynamic_a8xx_bias(profile,
+                                 rp_state->drawcall_count,
+                                 has_multiview_or_layers,
+                                 total_draw_call_bandwidth,
+                                 &sysmem_bandwidth,
+                                 &gmem_bandwidth);
+         // --- КОНЕЦ ВСТАВКИ ИЗ OLD ---
 
          bool select_sysmem = sysmem_bandwidth <= gmem_bandwidth;
          render_mode mode = select_sysmem ? render_mode::SYSMEM : render_mode::GMEM;
@@ -1958,6 +2029,22 @@ tu_autotune::get_optimal_mode(struct tu_cmd_buffer *cmd_buffer, rp_ctx_t *rp_ctx
                     render_mode_str(*early_return_mode));
       return *early_return_mode;
    }
+
+   // --- НАЧАЛО ВСТАВКИ ИЗ OLD: fallback на основе drawcall-порогов ---
+   // Если включён BANDWIDTH, но история пуста — используем fallback на основе drawcall-порогов (как в OLD)
+   if (config.is_enabled(algorithm::BANDWIDTH) && *rp_ctx) {
+      rp_entry *entry = *rp_ctx;
+      if (entry->history->bandwidth.empty()) {
+         unsigned threshold = get_a8xx_sysmem_drawcall_threshold(device->physical_device->dev_id.chip_id);
+         at_log_base_h("no history, drawcall_count=%u, threshold=%u, using %s", key.hash, rp_state->drawcall_count,
+                       threshold, rp_state->drawcall_count > threshold ? "GMEM" : "SYSMEM");
+         if (rp_state->drawcall_count > threshold)
+            return render_mode::GMEM;
+         else
+            return render_mode::SYSMEM;
+      }
+   }
+   // --- КОНЕЦ ВСТАВКИ ИЗ OLD ---
 
    if (config.is_enabled(algorithm::PROFILED) || config.is_enabled(algorithm::PROFILED_IMM))
       return history.profiled.get_optimal_mode(history);
