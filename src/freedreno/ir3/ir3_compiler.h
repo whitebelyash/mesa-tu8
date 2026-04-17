@@ -24,37 +24,15 @@ struct ir3_ra_reg_set;
 struct ir3_shader;
 
 struct ir3_compiler_options {
-   /* If true, promote UBOs (except for constant data) to constants using ldc.k
-    * in the preamble. The driver should ignore everything in ubo_state except
-    * for the constant data UBO, which is excluded because the command pushing
-    * constants for it can be pre-baked when compiling the shader.
-    */
    bool push_ubo_with_preamble;
-
-   /* If true, disable the shader cache. The driver is then responsible for
-    * caching.
-    */
    bool disable_cache;
-
-   /* If >= 0, this specifies the bindless descriptor set + descriptor to use
-    * for txf_ms_fb
-    */
    int bindless_fb_read_descriptor;
    int bindless_fb_read_slot;
-
-   /* True if 16-bit descriptors are available. */
    bool storage_16bit;
-   /* True if 8-bit descriptors are available. */
    bool storage_8bit;
-
-   /* If base_vertex should be lowered in nir */
    bool lower_base_vertex;
-
    bool shared_push_consts;
-
-   /* "dual_color_blend_by_location" workaround is enabled: */
    bool dual_color_blend_by_location;
-
    uint64_t uche_trap_base;
 };
 
@@ -67,203 +45,63 @@ struct ir3_compiler {
    struct disk_cache *disk_cache;
 
    struct nir_shader_compiler_options nir_options;
-
-   /*
-    * Configuration options for things handled differently by turnip vs
-    * gallium
-    */
    struct ir3_compiler_options options;
 
-   /*
-    * Configuration options for things that are handled differently on
-    * different generations:
-    */
-
    bool is_64bit;
-
-   /* a4xx (and later) drops SP_FS_FLAT_SHAD_MODE_REG_* for flat-interpolate
-    * so we need to use ldlv.u32 to load the varying directly:
-    */
    bool flat_bypass;
-
-   /* on a3xx, we need to add one to # of array levels:
-    */
    bool levels_add_one;
-
-   /* on a3xx, we need to scale up integer coords for isaml based
-    * on LoD:
-    */
    bool unminify_coords;
-
-   /* on a3xx do txf_ms w/ isaml and scaled coords: */
    bool txf_ms_with_isaml;
-
-   /* on a4xx, for array textures we need to add 0.5 to the array
-    * index coordinate:
-    */
    bool array_index_add_half;
-
-   /* on a6xx, rewrite samgp to sequence of samgq0-3 in vertex shaders:
-    */
    bool samgq_workaround;
-
-   /* Whether full and half regs are merged. */
    bool mergedregs;
 
    const struct fd_dev_info *info;
 
-   /* The maximum number of constants, in vec4's, across the entire graphics
-    * pipeline.
-    */
    uint16_t max_const_pipeline;
-
-   /* The maximum number of constants, in vec4's, for VS+HS+DS+GS. */
    uint16_t max_const_geom;
-
-   /* The maximum number of constants, in vec4's, for FS. */
    uint16_t max_const_frag;
-
-   /* A "safe" max constlen that can be applied to each shader in the
-    * pipeline which we guarantee will never exceed any combined limits.
-    */
    uint16_t max_const_safe;
-
-   /* The maximum number of constants, in vec4's, for compute shaders. */
    uint16_t max_const_compute;
-
-   /* See freedreno_dev_info::compute_lb_size. */
    uint32_t compute_lb_size;
-
-   /* Number of instructions that the shader's base address and length
-    * (instrlen divides instruction count by this) must be aligned to.
-    */
    uint32_t instr_align;
-
-   /* on a3xx, the unit of indirect const load is higher than later gens (in
-    * vec4 units):
-    */
    uint32_t const_upload_unit;
-
-   /* This is theoretical maximum number of vec4 registers that one wave of
-    * the base threadsize could use. To get the actual size of the register
-    * file in bytes one would need to compute:
-    *
-    * reg_size_vec4 * threadsize_base * wave_granularity * 16 (bytes per vec4)
-    *
-    * However this number is more often what we actually need. For example, a
-    * max_reg more than half of this will result in a doubled threadsize
-    * being impossible (because double-sized waves take up twice as many
-    * registers). Also, the formula for the occupancy given a particular
-    * register footprint is simpler.
-    *
-    * It is in vec4 units because the register file is allocated
-    * with vec4 granularity, so it's in the same units as max_reg.
-    */
    uint32_t reg_size_vec4;
-
-   /* The number of total branch stack entries. */
    uint32_t branchstack_size;
-
-   /* The maximum number of branch stack entries per wave. */
    uint32_t max_branchstack;
-
-   /* The byte increment of MEMSIZEPERITEM, the private memory per-fiber allocation. */
    uint32_t pvtmem_per_fiber_align;
 
-   /* Whether clip+cull distances are supported */
    bool has_clip_cull;
-
-   /* Whether private memory is supported */
    bool has_pvtmem;
-
-   /* Whether SSBOs have descriptors for sampling with ISAM */
    bool has_isam_ssbo;
-
-   /* Is lock/unlock sequence needed for CS? */
    bool cs_lock_unlock_quirk;
-
-   /* True if the shfl instruction is supported. Needed for subgroup rotate and
-    * (more efficient) shuffle.
-    */
    bool has_shfl;
-
-   /* True if the bitwise triops (sh[lr][gm]/andg) are supported. */
    bool has_bitwise_triops;
 
-   /* Number of available predicate registers (p0.c) */
    uint32_t num_predicates;
-
-   /* True if bitops (and.b, or.b, xor.b, not.b) can write to p0.c */
    bool bitops_can_write_predicates;
-
-   /* True if braa/brao are available. */
    bool has_branch_and_or;
-
-   /* True if predt/predf/prede are supported. */
    bool has_predication;
-
-   /* MAX_COMPUTE_VARIABLE_GROUP_INVOCATIONS_ARB */
    uint32_t max_variable_workgroup_size;
 
-   /* Type to use for 1b nir bools: */
    type_t bool_type;
-
-   /* Whether compute invocation params are passed in via shared regfile or
-    * constbuf. a5xx+ has the shared regfile.
-    */
    bool has_shared_regfile;
-
-   /* True if preamble instructions (shps, shpe, etc.) are supported */
    bool has_preamble;
 
-   /* Where the shared consts start in constants file, in vec4's. */
    uint16_t shared_consts_base_offset;
-
-   /* The size of shared consts for CS and FS(in vec4's).
-    * Also the size that is actually used on geometry stages (on a6xx).
-    */
    uint64_t shared_consts_size;
-
-   /* Found on a6xx for geometry stages, that is different from
-    * actually used shared consts.
-    *
-    * TODO: Keep an eye on this for next gens.
-    */
    uint64_t geom_shared_consts_size_quirk;
 
-   /* True if (rptN) is supported for bary.f. */
    bool has_rpt_bary_f;
-
-   /* True if alias.tex is supported. */
    bool has_alias_tex;
-
    bool cat3_rel_offset_0_quirk;
 
-   /* A8xx chip-specific tuning */
+   /* A8xx chip-specific tuning (SAFE - no FP16 lowering) */
    bool is_a8xx;
-   uint8_t a8xx_tier; /* 0=A810, 1=A825, 2=A829, 3=A830, 4=A840 */
-   bool a8xx_aggressive_fp16;
-   bool a8xx_minimize_barriers;
-   bool a8xx_vectorize_io;
-   uint8_t a8xx_reg_pressure_scale; /* 100 = default, <100 = more aggressive */
 
    struct {
-      /* The number of cycles needed for the result of one ALU operation to be
-       * available to another ALU operation. Only valid when the halfness of the
-       * source and destination match.
-       */
       unsigned alu_to_alu;
-
-      /* The number of cycles needed for the result of one instruction to be
-       * available to another. Valid for a0.x, a1.x, and p0.c destinations, ALU
-       * to non-ALU dependencies, and ALU to ALU dependencies witch mismatched
-       * halfness.
-       */
       unsigned non_alu;
-
-      /* The number of cycles from the start of the instruction until a cat3
-       * instruction reads its 3rd src.
-       */
       unsigned cat3_src2_read;
    } delay_slots;
 };
@@ -293,7 +131,6 @@ int ir3_compile_shader_nir(struct ir3_compiler *compiler,
                            struct ir3_shader *shader,
                            struct ir3_shader_variant *so);
 
-/* gpu pointer size in units of 32bit registers/slots */
 static inline unsigned
 ir3_pointer_size(struct ir3_compiler *compiler)
 {
@@ -322,8 +159,6 @@ enum ir3_shader_debug {
    IR3_DBG_NODESCPREFETCH = BITFIELD_BIT(18),
    IR3_DBG_EXPANDRPT = BITFIELD_BIT(19),
    IR3_DBG_ASM_ROUNDTRIP = BITFIELD_BIT(20),
-
-   /* MESA_DEBUG-only options: */
    IR3_DBG_SCHEDMSGS = BITFIELD_BIT(21),
    IR3_DBG_RAMSGS = BITFIELD_BIT(22),
    IR3_DBG_NOALIASTEX = BITFIELD_BIT(23),
@@ -371,10 +206,6 @@ ir3_debug_print(struct ir3 *ir, const char *when)
    }
 }
 
-/* Return the debug flags that influence shader codegen and should be included
- * in the hash key. Note that we use a deny list so that we don't accidentally
- * forget to include new flags.
- */
 static inline enum ir3_shader_debug
 ir3_shader_debug_hash_key()
 {
@@ -386,7 +217,6 @@ ir3_shader_debug_hash_key()
         IR3_DBG_SHADER_INTERNAL | IR3_DBG_SCHEDMSGS | IR3_DBG_RAMSGS));
 }
 
-/* Returns a pointer to internal static tmp buffer. */
 const char *
 ir3_shader_debug_as_string(void);
 

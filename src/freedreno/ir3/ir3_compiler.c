@@ -15,14 +15,13 @@
 #include "ir3_nir.h"
 
 static const struct debug_named_value shader_debug_options[] = {
-   /* clang-format off */
    {"vs",         IR3_DBG_SHADER_VS,  "Print shader disasm for vertex shaders"},
    {"tcs",        IR3_DBG_SHADER_TCS, "Print shader disasm for tess ctrl shaders"},
    {"tes",        IR3_DBG_SHADER_TES, "Print shader disasm for tess eval shaders"},
    {"gs",         IR3_DBG_SHADER_GS,  "Print shader disasm for geometry shaders"},
    {"fs",         IR3_DBG_SHADER_FS,  "Print shader disasm for fragment shaders"},
    {"cs",         IR3_DBG_SHADER_CS,  "Print shader disasm for compute shaders"},
-   {"internal",   IR3_DBG_SHADER_INTERNAL, "Print shader disasm for internal shaders (normally not included in vs/fs/cs/etc)"},
+   {"internal",   IR3_DBG_SHADER_INTERNAL, "Print shader disasm for internal shaders"},
    {"disasm",     IR3_DBG_DISASM,     "Dump NIR and adreno shader disassembly"},
    {"optmsgs",    IR3_DBG_OPTMSGS,    "Enable optimizer debug messages"},
    {"forces2en",  IR3_DBG_FORCES2EN,  "Force s2en mode for tex sampler instructions"},
@@ -40,12 +39,10 @@ static const struct debug_named_value shader_debug_options[] = {
    {"noaliasrt",  IR3_DBG_NOALIASRT,  "Don't use alias.rt"},
    {"asmroundtrip", IR3_DBG_ASM_ROUNDTRIP, "Disassemble, reassemble and compare every shader"},
 #if MESA_DEBUG
-   /* MESA_DEBUG-only options: */
    {"schedmsgs",  IR3_DBG_SCHEDMSGS,  "Enable scheduler debug messages"},
    {"ramsgs",     IR3_DBG_RAMSGS,     "Enable register-allocation debug messages"},
 #endif
    DEBUG_NAMED_VALUE_END
-   /* clang-format on */
 };
 
 DEBUG_GET_ONCE_FLAGS_OPTION(ir3_shader_debug, "IR3_SHADER_DEBUG",
@@ -68,7 +65,6 @@ ir3_nir_lower_convert_alu_types(nir_intrinsic_instr *conv)
 {
    assert(conv->intrinsic == nir_intrinsic_convert_alu_types);
 
-   /* Lower anything with const src for better constant folding: */
    if (nir_src_is_const(conv->src[0]))
       return true;
 
@@ -76,10 +72,6 @@ ir3_nir_lower_convert_alu_types(nir_intrinsic_instr *conv)
    nir_alu_type dest_type = nir_intrinsic_dest_type(conv);
    nir_rounding_mode rounding = nir_intrinsic_rounding_mode(conv);
 
-   /* If rounding mode is undef, and no saturation, then lower.  In this
-    * case, the @convert_alu_types will be lowered trivially to a single
-    * alu opc, so no need to preserve the @convert_alu_types for backend.
-    */
    if (rounding == nir_rounding_mode_undef &&
        !nir_intrinsic_saturate(conv))
       return true;
@@ -89,28 +81,19 @@ ir3_nir_lower_convert_alu_types(nir_intrinsic_instr *conv)
    unsigned src_bit_size = nir_alu_type_get_type_size(src_type);
    unsigned dest_bit_size = nir_alu_type_get_type_size(dest_type);
 
-   /* Int->int conversion don't round: */
    if ((src_base_type != nir_type_float) && (dest_base_type != nir_type_float))
       return true;
 
-   /* Float widening does not round: */
    if ((src_base_type == nir_type_float) && (dest_base_type == nir_type_float) &&
        (dest_bit_size > src_bit_size))
       return true;
 
-   /* int64 needs nir_lower_int64, as hw does not natively support this: */
    if ((dest_bit_size > 32) || (src_bit_size > 32))
       return true;
 
-   /* Conversions [u]int8 <-> float need some special handling, but we
-    * can just let the lowering and normal create_cov() path handle it:
-    */
    if ((dest_bit_size < 16) || (src_bit_size < 16))
       return true;
 
-   /* Everything else maps to single ir3 instructions, so preserve for
-    * backend to handle:
-    */
    return false;
 }
 
@@ -129,15 +112,6 @@ static const nir_shader_compiler_options ir3_base_options = {
    .lower_usub_borrow = true,
    .lower_mul_high = true,
    .lower_mul_2x32_64 = true,
-   /* ir3's mad is an unfused mul-add instruction, so we need to flag fma
-    * lowering so that CL can implement fused fma in software.  GLSL,
-    * SPIRV, and NIR don't require either fused or unfused behavior from
-    * fma, and we'll turn mul+adds back into nir_op_ffma (again, implemented
-    * as unfused) during nir_opt_algebraic_late() (assuming it's not
-    * decorated with GLSL's precise, or SPIRV's NoContraction), or
-    * ir3_nir_opt_algebraic_late (if it is, since ir3's unfused mul-add is
-    * precise).
-    */
    .lower_ffma16 = true,
    .lower_ffma32 = true,
    .lower_ffma64 = true,
@@ -178,31 +152,20 @@ static const nir_shader_compiler_options ir3_base_options = {
    .lower_uniforms_to_ubo = true,
    .max_unroll_iterations = 32,
    .max_samples = 4,
-
-   /* Not actually supported but we want fmulz to be produced and then be
-    * lowered with the abs min pattern since we have free abs on min.
-    */
    .has_fmulz = true,
    .lower_fmulz_with_abs_min = true,
-
    .lower_cs_local_index_to_id = true,
    .lower_wpos_pntc = true,
-
    .lower_hadd = true,
    .lower_hadd64 = true,
    .lower_fisnormal = true,
-
    .lower_int64_options = (nir_lower_int64_options)~0,
    .lower_doubles_options = (nir_lower_doubles_options)~0,
-
    .divergence_analysis_options = nir_divergence_uniform_load_tears,
    .scalarize_ddx = true,
-
    .per_view_unique_driver_locations = true,
    .compact_view_index = true,
-
    .io_options = nir_io_has_intrinsics,
-
    .lower_convert_alu_types = ir3_nir_lower_convert_alu_types,
 };
 
@@ -211,10 +174,6 @@ struct ir3_a8xx_codegen_profile {
    uint8_t alu_to_alu_delay;
    uint8_t non_alu_delay;
    uint8_t cat3_src2_read_delay;
-   bool aggressive_fp16;
-   bool minimize_barriers;
-   bool vectorize_io;
-   uint8_t reg_pressure_scale;
 };
 
 static struct ir3_a8xx_codegen_profile
@@ -223,18 +182,18 @@ ir3_a8xx_codegen_profile(uint64_t chip_id)
    switch (chip_id) {
    case 0x44010000:
    case 0xffff44010000: /* Adreno 810 */
-      return (struct ir3_a8xx_codegen_profile){16, 2, 5, 1, true, true, true, 70};
+      return (struct ir3_a8xx_codegen_profile){16, 2, 5, 1};
    case 0x44030000: /* Adreno 825 */
-      return (struct ir3_a8xx_codegen_profile){24, 2, 5, 1, true, true, true, 85};
+      return (struct ir3_a8xx_codegen_profile){24, 2, 5, 1};
    case 0x44030A20: /* Adreno 829 */
-      return (struct ir3_a8xx_codegen_profile){26, 2, 5, 1, true, true, true, 85};
+      return (struct ir3_a8xx_codegen_profile){26, 2, 5, 1};
    case 0x44050001:
    case 0xffff44050000: /* Adreno 830 */
-      return (struct ir3_a8xx_codegen_profile){32, 2, 5, 1, true, false, true, 100};
+      return (struct ir3_a8xx_codegen_profile){32, 2, 5, 1};
    case 0xffff44050A31: /* Adreno 840 */
-      return (struct ir3_a8xx_codegen_profile){32, 2, 5, 1, true, false, true, 100};
+      return (struct ir3_a8xx_codegen_profile){32, 2, 5, 1};
    default:
-      return (struct ir3_a8xx_codegen_profile){28, 2, 5, 1, false, false, false, 100};
+      return (struct ir3_a8xx_codegen_profile){28, 2, 5, 1};
    }
 }
 
@@ -275,10 +234,8 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
    compiler->options = *options;
    compiler->info = dev_info;
 
-   /* TODO see if older GPU's were different here */
    compiler->branchstack_size = dev_info->props.has_dual_wave_dispatch ? 512 : 256;
    compiler->max_branchstack = 64;
-
    compiler->max_variable_workgroup_size = 1024;
 
    compiler->num_predicates = 1;
@@ -290,39 +247,18 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
    compiler->delay_slots.non_alu = 6;
    compiler->delay_slots.cat3_src2_read = 2;
 
+   /* Initialize A8xx flag */
+   compiler->is_a8xx = (compiler->gen >= 8);
+
    if (compiler->gen >= 6) {
       compiler->samgq_workaround = true;
-      /* a6xx split the pipeline state into geometry and fragment state, in
-       * order to let the VS run ahead of the FS. As a result there are now
-       * separate const files for the the fragment shader and everything
-       * else, and separate limits. There seems to be a shared limit, but
-       * it's higher than the vert or frag limits.
-       *
-       * Also, according to the observation on a630/a650/a660, max_const_pipeline
-       * has to be 512 when all geometry stages are present. Otherwise a gpu hang
-       * happens. Accordingly maximum safe size for each stage should be under
-       * (max_const_pipeline / 5 (stages)) with 4 vec4's alignment considered for
-       * const files.
-       *
-       * Only when VS and FS stages are present, the limit is 640.
-       *
-       * TODO: The shared limit seems to be different on different models.
-       */
       compiler->max_const_pipeline = 512;
       compiler->max_const_frag = 512;
       compiler->max_const_geom = 512;
       compiler->max_const_safe = 100;
-
-      /* Compute shaders don't share a const file with the FS. Instead they
-       * have their own file, which is smaller than the FS one. On a7xx the size
-       * was doubled, although this doesn't work on X1-85.
-       *
-       * TODO: is this true on earlier gen's?
-       */
       compiler->max_const_compute = compiler->gen >= 7 ? 512 : 256;
 
       if (dev_info->props.is_a702) {
-         /* No GS/tess, 128 per stage otherwise: */
          compiler->max_const_compute = 128;
          compiler->max_const_pipeline = 256;
          compiler->max_const_frag = 128;
@@ -330,9 +266,7 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
          compiler->max_const_safe = 128;
       }
 
-      /* TODO: implement clip+cull distances on earlier gen's */
       compiler->has_clip_cull = true;
-
       compiler->has_preamble = true;
 
       if (compiler->gen == 6 && options->shared_push_consts) {
@@ -352,7 +286,6 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
       compiler->has_rpt_bary_f = true;
       compiler->has_shfl = true;
       compiler->mergedregs = true;
-
       compiler->has_alias_tex = (compiler->gen >= 7);
 
       if (compiler->gen == 7) {
@@ -365,85 +298,37 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
       compiler->max_const_geom = 512;
       compiler->max_const_frag = 512;
       compiler->max_const_compute = 512;
-
-      /* Note: this will have to change if/when we support tess+GS on
-       * earlier gen's.
-       */
       compiler->max_const_safe = 256;
    }
 
-   /* Initialize A8xx-specific defaults */
-   compiler->is_a8xx = false;
-   compiler->a8xx_tier = 0;
-   compiler->a8xx_aggressive_fp16 = false;
-   compiler->a8xx_minimize_barriers = false;
-   compiler->a8xx_vectorize_io = false;
-   compiler->a8xx_reg_pressure_scale = 100;
-
-   if (compiler->gen >= 8) {
-      const struct ir3_a8xx_codegen_profile profile =
-         ir3_a8xx_codegen_profile(dev_id->chip_id);
-
-      compiler->nir_options.max_unroll_iterations = profile.max_unroll_iterations;
-      compiler->delay_slots.alu_to_alu = profile.alu_to_alu_delay;
-      compiler->delay_slots.non_alu = profile.non_alu_delay;
-      compiler->delay_slots.cat3_src2_read = profile.cat3_src2_read_delay;
-
-      /* A8xx tuning flags */
-      compiler->is_a8xx = true;
-      compiler->a8xx_aggressive_fp16 = profile.aggressive_fp16;
-      compiler->a8xx_minimize_barriers = profile.minimize_barriers;
-      compiler->a8xx_vectorize_io = profile.vectorize_io;
-      compiler->a8xx_reg_pressure_scale = profile.reg_pressure_scale;
-
-      /* Set tier based on chip */
-      switch (dev_id->chip_id) {
-      case 0x44010000:
-      case 0xffff44010000:
-         compiler->a8xx_tier = 0; break;
-      case 0x44030000:
-         compiler->a8xx_tier = 1; break;
-      case 0x44030A20:
-         compiler->a8xx_tier = 2; break;
-      case 0x44050001:
-      case 0xffff44050000:
-         compiler->a8xx_tier = 3; break;
-      case 0xffff44050A31:
-         compiler->a8xx_tier = 4; break;
-      default:
-         compiler->a8xx_tier = 0; break;
-      }
+   /* Apply A8xx-specific delay slots (same as A7xx - SAFE) */
+   if (compiler->is_a8xx) {
+      compiler->delay_slots.alu_to_alu = 2;
+      compiler->delay_slots.non_alu = 5;
+      compiler->delay_slots.cat3_src2_read = 1;
    }
 
    if (dev_info->compute_lb_size) {
       compiler->compute_lb_size = dev_info->compute_lb_size;
    } else {
       compiler->compute_lb_size =
-         compiler->max_const_compute * 16 /* bytes/vec4 */ *
+         compiler->max_const_compute * 16 *
          compiler->info->wave_granularity + compiler->info->cs_shared_mem_size;
    }
 
-   /* This is just a guess for a4xx. */
    compiler->pvtmem_per_fiber_align = compiler->gen >= 4 ? 512 : 128;
-   /* TODO: implement private memory on earlier gen's */
    compiler->has_pvtmem = compiler->gen >= 5;
-
    compiler->has_isam_ssbo = compiler->gen >= 6;
 
    if (compiler->gen >= 6) {
       compiler->reg_size_vec4 = dev_info->props.reg_size_vec4;
    } else if (compiler->gen >= 4) {
-      /* On a4xx-a5xx, using r24.x and above requires using the smallest
-       * threadsize.
-       */
       compiler->reg_size_vec4 = 48;
    } else {
-      /* TODO: confirm this */
       compiler->reg_size_vec4 = 96;
    }
 
    if (compiler->gen >= 4) {
-      /* need special handling for "flat" */
       compiler->flat_bypass = true;
       compiler->levels_add_one = false;
       compiler->unminify_coords = false;
@@ -452,7 +337,6 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
       compiler->instr_align = 16;
       compiler->const_upload_unit = 4;
    } else {
-      /* no special handling for "flat" */
       compiler->flat_bypass = false;
       compiler->levels_add_one = true;
       compiler->unminify_coords = true;
@@ -467,13 +351,18 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
    compiler->has_bitwise_triops = compiler->gen >= 5;
    compiler->cat3_rel_offset_0_quirk = compiler->gen <= 5;
 
-   /* The driver can't request this unless preambles are supported. */
    if (options->push_ubo_with_preamble)
       assert(compiler->has_preamble);
 
-   /* Set up nir shader compiler options, using device-specific overrides of our base settings. */
    compiler->nir_options = ir3_base_options;
    compiler->nir_options.has_iadd3 = dev_info->props.has_sad;
+
+   /* Apply A8xx max_unroll_iterations */
+   if (compiler->is_a8xx) {
+      const struct ir3_a8xx_codegen_profile profile =
+         ir3_a8xx_codegen_profile(dev_id->chip_id);
+      compiler->nir_options.max_unroll_iterations = profile.max_unroll_iterations;
+   }
 
    if (compiler->gen >= 6) {
       compiler->nir_options.force_indirect_unrolling = nir_var_all,
@@ -494,12 +383,10 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
    } else if (compiler->gen >= 3 && compiler->gen <= 5) {
       compiler->nir_options.vertex_id_zero_based = true;
    } else if (compiler->gen <= 2) {
-      /* a2xx compiler doesn't handle indirect: */
       compiler->nir_options.force_indirect_unrolling = nir_var_all;
    }
 
    if (compiler->gen >= 5) {
-      /* keep in sync with vk_properties */
       compiler->nir_options.max_workgroup_count[0] =
          compiler->nir_options.max_workgroup_count[1] =
          compiler->nir_options.max_workgroup_count[2] = 65535;
@@ -513,17 +400,8 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
       compiler->nir_options.lower_base_vertex = true;
    }
 
-   /* 16-bit ALU op generation is mostly controlled by frontend compiler options, but
-    * this core NIR option enables some optimizations of 16-bit operations.
-    */
-   if (compiler->gen >= 5 && !(ir3_shader_debug & IR3_DBG_NOFP16)) {
+   if (compiler->gen >= 5 && !(ir3_shader_debug & IR3_DBG_NOFP16))
       compiler->nir_options.support_16bit_alu = true;
-      /* Force aggressive FP16 for A8xx */
-      if (compiler->is_a8xx && compiler->a8xx_aggressive_fp16) {
-         compiler->nir_options.lower_flrp16 = true;
-         compiler->nir_options.lower_fdiv = true;
-      }
-   }
 
    compiler->nir_options.support_indirect_inputs =
       BITFIELD_BIT(MESA_SHADER_TESS_CTRL) |
